@@ -1,0 +1,87 @@
+:root {
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-size: 14px;
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+  width: 320px;
+}
+header h1 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+}
+
+section {
+  margin-bottom: 10px;
+}
+label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.add-row {
+  display: flex;
+  gap: 6px;
+}
+.add-row input {
+  flex: 1;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+.add-row button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #10b981;
+  color: #fff;
+  cursor: pointer;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(125, 125, 125, 0.15);
+}
+.chip .x {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mode select {
+  width: 100%;
+  padding: 6px;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+button#save {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+}
+#status {
+  font-size: 12px;
+  opacity: 0.8;
+}

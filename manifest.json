@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "ClarityFilter",
+  "version": "0.2.0",
+  "description": "Hide, blur, or redact articles mentioning names you choose.",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ClarityFilter"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
