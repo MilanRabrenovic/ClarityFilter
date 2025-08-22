@@ -1,26 +1,23 @@
-// popup.js
+// popup.js — global pause only
 const STORAGE_KEY = "cf_settings";
-const LEGACY_KEYS = ["pcf_settings"]; // migrate old installs
+const LEGACY_KEYS = ["pcf_settings"];
 
 const nameInput = document.getElementById("nameInput");
 const addBtn = document.getElementById("addBtn");
 const chipsEl = document.getElementById("chips");
 const modeEl = document.getElementById("mode");
 const statusEl = document.getElementById("status");
+const masterToggle = document.getElementById("masterToggle");
 
-let names = [];
+let state = { names: [], mode: "hide", enabled: true };
 
-// ------ storage helpers ------
-const getSync = (keys) =>
-  new Promise((res) => chrome.storage.sync.get(keys, res));
-const getLocal = (keys) =>
-  new Promise((res) => chrome.storage.local.get(keys, res));
-const setSync = (obj) =>
-  new Promise((res) => chrome.storage.sync.set(obj, res));
-const setLocal = (obj) =>
-  new Promise((res) => chrome.storage.local.set(obj, res));
-const removeSync = (keys) =>
-  new Promise((res) => chrome.storage.sync.remove(keys, res));
+// storage helpers
+const getSync = (k) => new Promise((res) => chrome.storage.sync.get(k, res));
+const getLocal = (k) => new Promise((res) => chrome.storage.local.get(k, res));
+const setSync = (o) => new Promise((res) => chrome.storage.sync.set(o, res));
+const setLocal = (o) => new Promise((res) => chrome.storage.local.set(o, res));
+const removeSync = (k) =>
+  new Promise((res) => chrome.storage.sync.remove(k, res));
 
 async function migrateIfNeeded() {
   const syncAll = await getSync(null);
@@ -34,43 +31,50 @@ async function migrateIfNeeded() {
     }
   }
 }
-
+function normalize(saved) {
+  const raw = Array.isArray(saved.names) ? saved.names : [];
+  const names = raw
+    .map((n) => (typeof n === "string" ? n : (n && n.text) || ""))
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return {
+    names,
+    mode: saved.mode || "hide",
+    enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
+  };
+}
 async function loadState() {
   await migrateIfNeeded();
   const [syncRes, localRes] = await Promise.all([
     getSync([STORAGE_KEY]),
     getLocal([STORAGE_KEY]),
   ]);
-  const saved = syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {};
-  return {
-    names: Array.isArray(saved.names) ? saved.names.slice(0, 200) : [],
-    mode: saved.mode || "hide",
-  };
+  return normalize(syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {});
 }
-
-async function saveState(state) {
+async function saveState(s) {
   await Promise.allSettled([
-    setSync({ [STORAGE_KEY]: state }),
-    setLocal({ [STORAGE_KEY]: state }),
+    setSync({ [STORAGE_KEY]: s }),
+    setLocal({ [STORAGE_KEY]: s }),
   ]);
 }
 
-// ------ UI ------
+// UI
 function renderChips() {
   chipsEl.innerHTML = "";
-  names.forEach((n, idx) => {
+  state.names.forEach((text, idx) => {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = n;
+    chip.textContent = text;
 
     const x = document.createElement("button");
     x.className = "x";
-    x.setAttribute("aria-label", `Remove ${n}`);
     x.textContent = "×";
-    x.addEventListener("click", async () => {
-      names.splice(idx, 1);
+    x.setAttribute("aria-label", `Remove ${text}`);
+    x.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      state.names.splice(idx, 1);
       renderChips();
-      await save(); // persist immediately
+      await save();
     });
 
     chip.appendChild(x);
@@ -81,8 +85,8 @@ function renderChips() {
 async function addName() {
   const raw = (nameInput.value || "").trim();
   if (!raw) return;
-  if (!names.includes(raw)) {
-    names.push(raw);
+  if (!state.names.includes(raw)) {
+    state.names.push(raw);
     renderChips();
     await save();
   }
@@ -100,28 +104,29 @@ function rescanActiveTabAndShowCount() {
         setTimeout(() => (statusEl.textContent = ""), 1500);
         return;
       }
-      statusEl.textContent = `Filtered: ${resp?.count ?? 0}`;
+      statusEl.textContent = state.enabled
+        ? `Filtered: ${resp?.count ?? 0}`
+        : "Paused";
       setTimeout(() => (statusEl.textContent = ""), 1500);
     });
   });
 }
 
 async function load() {
-  const state = await loadState();
-  names = state.names;
+  state = await loadState();
+  masterToggle.checked = !!state.enabled;
   modeEl.value = state.mode;
   renderChips();
   rescanActiveTabAndShowCount();
 }
-
 async function save() {
-  await saveState({ names, mode: modeEl.value });
+  await saveState(state);
   statusEl.textContent = "Saved";
   setTimeout(() => (statusEl.textContent = ""), 900);
   rescanActiveTabAndShowCount();
 }
 
-// events (no Save button!)
+// events
 addBtn.addEventListener("click", addName);
 nameInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
@@ -129,9 +134,13 @@ nameInput.addEventListener("keydown", (e) => {
     addName();
   }
 });
-modeEl.addEventListener("change", () => save());
-
-// init
-document.addEventListener("DOMContentLoaded", () => {
-  load();
+modeEl.addEventListener("change", async () => {
+  state.mode = modeEl.value;
+  await save();
 });
+masterToggle.addEventListener("change", async () => {
+  state.enabled = masterToggle.checked;
+  await save();
+});
+
+document.addEventListener("DOMContentLoaded", load);

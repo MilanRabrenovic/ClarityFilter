@@ -6,12 +6,16 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header>
+    <header class="row">
       <h1>ClarityFilter</h1>
+      <label class="switch" title="Pause/Resume filtering">
+        <input id="masterToggle" type="checkbox" />
+        <span class="slider"></span>
+      </label>
     </header>
 
     <section>
-      <label for="nameInput">Add a name</label>
+      <label for="nameInput">Add a name/term you are sick of</label>
       <div class="add-row">
         <input id="nameInput" type="text" placeholder="I'm sick of:" />
         <button id="addBtn" type="button" title="Add">Add</button>
