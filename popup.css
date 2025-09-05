@@ -3,19 +3,14 @@
   font-size: 14px;
   color-scheme: light dark;
 }
+
 body {
   margin: 0;
   padding: 12px;
-  width: 340px;
-}
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
+  width: 320px;
 }
 header h1 {
-  margin: 0;
+  margin: 0 0 8px 0;
   font-size: 16px;
 }
 
@@ -59,12 +54,6 @@ label {
   padding: 4px 8px;
   border-radius: 999px;
   background: rgba(125, 125, 125, 0.15);
-  cursor: pointer;
-  user-select: none;
-}
-.chip.disabled {
-  opacity: 0.45;
-  text-decoration: line-through;
 }
 .chip .x {
   border: 0;
@@ -72,24 +61,31 @@ label {
   cursor: pointer;
   font-weight: 700;
   line-height: 1;
-  padding-left: 2px;
 }
 
 .mode select {
   width: 100%;
   padding: 6px;
 }
+
 footer {
   display: flex;
   align-items: center;
   gap: 8px;
 }
+button#save {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+}
 #status {
   font-size: 12px;
   opacity: 0.8;
 }
-
-/* Toggle switch */
+/* Slider-style toggle (first version) */
 .switch {
   position: relative;
   display: inline-block;
@@ -103,21 +99,23 @@ footer {
 }
 .slider {
   position: absolute;
-  cursor: pointer;
   inset: 0;
+  cursor: pointer;
   background: #c7c7c7;
   border-radius: 999px;
   transition: 0.2s;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 .slider:before {
-  position: absolute;
   content: "";
-  height: 18px;
-  width: 18px;
+  position: absolute;
   left: 3px;
   top: 3px;
+  width: 18px;
+  height: 18px;
   background: #fff;
   border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: 0.2s;
 }
 .switch input:checked + .slider {
@@ -125,4 +123,10 @@ footer {
 }
 .switch input:checked + .slider:before {
   transform: translateX(18px);
+}
+
+/* (optional) keyboard focus ring */
+.switch input:focus-visible + .slider {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }

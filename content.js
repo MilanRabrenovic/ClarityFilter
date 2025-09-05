@@ -1,34 +1,45 @@
-// ClarityFilter - content script (MV3) — global pause only
+// ClarityFilter - content script (Manifest V3)
+// ------------------------------------------------
+
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
 let settings = { names: [], mode: "hide", enabled: true };
 let nameRegex = null;
 let observer = null;
 
+const DEBUG_ALERT = false;
+
+// -------------------- Style --------------------
 const STYLE_ID = "cf-style";
 function ensureStyle() {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement("style");
   style.id = STYLE_ID;
-  style.textContent = `.cf-blur{filter:blur(10px)!important}.cf-hidden{display:none!important}`;
+  style.textContent = `
+    .cf-blur { filter: blur(10px) !important; }
+    .cf-hidden { display: none !important; }
+  `;
   document.documentElement.appendChild(style);
 }
 
-const debounce = (fn, wait = 150) => {
+// -------------------- Utils --------------------
+function debounce(fn, wait = 150) {
   let t;
-  return (...a) => {
+  return (...args) => {
     clearTimeout(t);
-    t = setTimeout(() => fn(...a), wait);
+    t = setTimeout(() => fn(...args), wait);
   };
-};
+}
 
+// Unicode-aware regex; allow short case endings (e.g., "Vučiću")
 function buildRegex(names) {
   const cleaned = (names || [])
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    .map((n) => n.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&"));
   if (!cleaned.length) return null;
+
   const core = `(?:${cleaned.join("|")})(?:[\\p{L}]{0,4})?`;
   try {
     return new RegExp(`(?<![\\p{L}\\p{N}_])${core}(?![\\p{L}\\p{N}_])`, "iu");
@@ -36,16 +47,27 @@ function buildRegex(names) {
     return new RegExp(`(^|[^\\p{L}\\p{N}_])${core}($|[^\\p{L}\\p{N}_])`, "iu");
   }
 }
-const elementMatchesText = (t) =>
-  !!nameRegex && nameRegex.test((t || "").normalize("NFC"));
-const shouldTarget = (el) =>
-  !(el?.classList?.contains("cf-blur") || el?.classList?.contains("cf-hidden"));
 
-const classTokens = (el) =>
-  ("" + (el?.className || ""))
+function elementMatchesText(text) {
+  if (!nameRegex) return false;
+  return nameRegex.test((text || "").normalize("NFC"));
+}
+
+function shouldTarget(el) {
+  if (!el || !el.classList) return true;
+  return (
+    !el.classList.contains("cf-blur") && !el.classList.contains("cf-hidden")
+  );
+}
+
+// -------------------- Heuristics --------------------
+function classTokens(el) {
+  if (!el || !el.className) return [];
+  return String(el.className)
     .toLowerCase()
     .split(/[^a-z0-9]+/g)
     .filter(Boolean);
+}
 const ITEM_TOKENS = new Set([
   "card",
   "post",
@@ -93,12 +115,14 @@ const WRAPPER_TOKENS = new Set([
   "panel",
   "rail",
 ]);
-const tokenHit = (t, s) => {
-  for (const x of t) if (s.has(x)) return true;
+
+function tokenHit(tokens, set) {
+  for (const t of tokens) if (set.has(t)) return true;
   return false;
-};
+}
+
 function looksHuge(el) {
-  const r = el?.getBoundingClientRect?.();
+  const r = el.getBoundingClientRect?.();
   if (!r) return false;
   const vw = Math.max(
     320,
@@ -108,64 +132,374 @@ function looksHuge(el) {
     320,
     window.innerHeight || document.documentElement.clientHeight || 0
   );
-  return r.width > vw * 0.96 || r.height > vh * 0.9;
+  const tooWide = r.width >= vw * 0.9;
+  const tooTall = r.height >= vh * 0.6;
+  return (tooWide && tooTall) || r.height >= 1200;
 }
-const looksLikeWrapper = (el) => tokenHit(classTokens(el), WRAPPER_TOKENS);
-const looksLikeItem = (el) => {
-  const t = classTokens(el);
-  return tokenHit(t, ITEM_TOKENS) && !tokenHit(t, WRAPPER_TOKENS);
-};
-const hasManyHeadlines = (el) =>
-  el.querySelectorAll(
-    "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i]"
-  ).length >= 3;
-const hasManyCardDescendants = (el) =>
-  el.querySelectorAll(
-    "article,[role='article'],.news,.post,.story,.result,.entry,.tile,.card,[class*='card' i]:not([class*='cards' i])"
-  ).length >= 2;
+function looksLikeWrapper(el) {
+  return tokenHit(classTokens(el), WRAPPER_TOKENS);
+}
+function looksLikeItem(el) {
+  const toks = classTokens(el);
+  return tokenHit(toks, ITEM_TOKENS) && !tokenHit(toks, WRAPPER_TOKENS);
+}
+function hasManyHeadlines(el) {
+  return (
+    el.querySelectorAll(
+      "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i]"
+    ).length >= 3
+  );
+}
+function hasManyCardDescendants(el) {
+  return (
+    el.querySelectorAll(
+      "article,[role='article'],.news,.post,.story,.result,.entry,.tile,.card,[class*='card' i]:not([class*='cards' i])"
+    ).length >= 2
+  );
+}
+function isForbiddenContainer(el) {
+  if (!el) return true;
+  if (el === document.body || el === document.documentElement) return true;
+  const tag = el.tagName;
+  return ["MAIN", "HEADER", "FOOTER", "NAV"].includes(tag);
+}
 
-function getContainer(el) {
-  let c = el.closest("article,[role='article'],li");
-  if (c && !looksHuge(c) && !hasManyCardDescendants(c)) return c;
-  let cur = el,
-    steps = 0,
-    best = null;
+// -------------------- Domain-agnostic container picker --------------------
+const CANDIDATE_MAX_DEPTH = 8;
+
+function hasSchemaArticle(el) {
+  const t = (el.getAttribute("itemtype") || "").toLowerCase();
+  return (
+    t.includes("schema.org/article") || t.includes("schema.org/newsarticle")
+  );
+}
+function hasMedia(el) {
+  return !!el.querySelector(
+    "img, picture, video, [style*='background-image' i], [class*='media' i], [data-testid*='media' i]"
+  );
+}
+function hasCardText(el) {
+  return !!el.querySelector(
+    "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i],[class*='description' i],[data-testid*='text' i],p"
+  );
+}
+function hasLinkImgTime(el) {
+  const a = el.querySelector("a[href]");
+  const img = el.querySelector("img, picture, [style*='background-image' i]");
+  const timeEl = el.querySelector("time,[datetime]");
+  let score = 0;
+  if (a) score += 6;
+  if (img) score += 6;
+  if (timeEl) score += 6;
+  return score;
+}
+function classTokenSet(el) {
+  const cn = (el.className || "").toString().toLowerCase();
+  return cn.split(/[^a-z0-9]+/g).filter(Boolean);
+}
+const ITEM_HINTS = new Set([
+  "card",
+  "post",
+  "article",
+  "story",
+  "result",
+  "entry",
+  "item",
+  "tile",
+  "teaser",
+  "news",
+  "media",
+  "module",
+  "node",
+]);
+const WRAPPER_HINTS = new Set([
+  "cards",
+  "lists",
+  "list",
+  "grid",
+  "row",
+  "rows",
+  "wrapper",
+  "wrap",
+  "container",
+  "content",
+  "layout",
+  "root",
+  "app",
+  "main",
+  "feed",
+  "stream",
+  "section",
+  "group",
+  "results",
+  "blocks",
+  "block",
+  "area",
+  "zone",
+  "columns",
+  "column",
+  "col",
+  "listing",
+  "listings",
+  "panel",
+  "rail",
+]);
+function tokenScore(el) {
+  const toks = classTokenSet(el);
+  let s = 0;
+  for (const t of toks) if (ITEM_HINTS.has(t)) s += 8;
+  for (const t of toks) if (WRAPPER_HINTS.has(t)) s -= 8;
+
+  // Bonus if data-testid hints at a card
+  const dt = (el.getAttribute("data-testid") || "").toLowerCase();
+  if (dt.includes("card") || dt.includes("promo") || dt.includes("article"))
+    s += 10;
+  if (dt.includes("grid") || dt.includes("list") || dt.includes("wrapper"))
+    s -= 10;
+
+  return s;
+}
+function isArticleish(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.tagName === "ARTICLE") return true;
+  if (el.getAttribute("role") === "article") return true;
+  const toks = classTokenSet(el);
+  return (
+    toks.includes("post") ||
+    toks.includes("article") ||
+    toks.includes("story") ||
+    toks.includes("tile")
+  );
+}
+function similarSiblingCount(el) {
+  if (!el || !el.parentElement) return 0;
+  const sibs = [...el.parentElement.children].filter((n) => n !== el);
+  if (!sibs.length) return 0;
+  const selfTokens = new Set(classTokenSet(el).map((t) => t.slice(0, 6)));
+  const selfDT = (el.getAttribute("data-testid") || "").toLowerCase();
+  let similar = 0;
+  for (const s of sibs) {
+    const st = classTokenSet(s).map((t) => t.slice(0, 6));
+    const dt = (s.getAttribute("data-testid") || "").toLowerCase();
+    if (
+      st.some((t) => selfTokens.has(t)) ||
+      (selfDT && dt && selfDT.split("-")[0] === dt.split("-")[0])
+    )
+      similar++;
+  }
+  return similar;
+}
+function badBigOrCluster(el) {
+  return looksHuge(el) || hasManyCardDescendants(el) || hasManyHeadlines(el);
+}
+function shrinkIfTooBig(el) {
+  if (!el) return el;
+  const isRoot = el === document.body || el === document.documentElement;
+  if (isRoot || badBigOrCluster(el)) {
+    const smaller = el.querySelector(`
+      article,[role='article'],li,
+      .post,.news-item,.story,.card,.teaser,.result,.entry,.tile,.search-result,.list-item,
+      [class*="card" i]:not([class*="cards" i]):not([class*="wrapper" i]):not([class*="wrap" i]):not([class*="list" i]):not([class*="grid" i]):not([class*="container" i]):not([class*="content" i]):not([class*="row" i]):not([class*="results" i]):not([class*="blocks" i]):not([class*="block" i]):not([class*="section" i])
+    `);
+    if (smaller && !badBigOrCluster(smaller) && !isForbiddenContainer(smaller))
+      return smaller;
+  }
+  return el;
+}
+function computeCandidateScore(el, depthFromMatch) {
+  if (!el || el === document.body || el === document.documentElement)
+    return -1e6;
+  if (badBigOrCluster(el)) return -500;
+  let score = 0;
+  if (isArticleish(el)) score += 40;
+  if (hasSchemaArticle(el)) score += 20;
+  score += tokenScore(el);
+  const sibs = similarSiblingCount(el);
+  if (sibs >= 1 && sibs <= 50) score += Math.min(24, 6 + sibs * 2);
+  if (
+    el.querySelector(
+      "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i]"
+    )
+  )
+    score += 12;
+  score += hasLinkImgTime(el);
+  score -= depthFromMatch * 3;
+  if (looksLikeWrapper(el)) score -= 15;
+  return score;
+}
+function collectCandidates(startEl) {
+  const out = [];
+  let cur = startEl,
+    depth = 0;
   while (
     cur &&
     cur !== document.body &&
     cur !== document.documentElement &&
-    steps < 8
+    depth <= CANDIDATE_MAX_DEPTH
   ) {
-    if (
-      looksLikeItem(cur) &&
-      !looksHuge(cur) &&
-      !hasManyCardDescendants(cur) &&
-      !hasManyHeadlines(cur)
-    ) {
-      best = cur;
-      break;
-    }
-    if (looksLikeWrapper(cur)) break;
+    out.push({ el: cur, depth });
     cur = cur.parentElement;
-    steps++;
+    depth++;
   }
-  if (!best)
-    best =
-      el.closest(
-        "h1,h2,h3,h4,h5,h6,[role='heading'],[class*='title' i],[class*='headline' i]"
-      ) || el;
+  return out;
+}
+
+// If media and text live in separate siblings,
+// prefer the smallest parent that contains BOTH, but not a multi-card wrapper.
+function promoteAcrossSiblings(el) {
+  if (!el || !el.parentElement) return el;
+  const parent = el.parentElement;
+
+  const parentHasMedia = !!parent.querySelector(
+    "img, picture, video, [style*='background-image' i], [class*='media' i], [data-testid*='media' i]"
+  );
+  const parentHasText = !!parent.querySelector(
+    "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i],[class*='description' i],p,[data-testid*='text' i]"
+  );
+
+  // avoid picking a grid/list wrapper that clearly holds multiple cards
+  const looksMulti =
+    hasManyCardDescendants(parent) ||
+    looksLikeWrapper(parent) ||
+    looksHuge(parent);
+
   if (
-    best === document.body ||
-    best === document.documentElement ||
-    looksHuge(best)
-  )
-    best = el;
+    parentHasMedia &&
+    parentHasText &&
+    !looksMulti &&
+    !isForbiddenContainer(parent)
+  ) {
+    return parent;
+  }
+  return el;
+}
+
+// If the chosen node is only the text wrapper, promote to the smallest parent that contains BOTH media and card text
+function promoteToCardBoundary(el) {
+  let cur = el;
+  for (let i = 0; i < 4 && cur && cur.parentElement; i++) {
+    const p = cur.parentElement;
+    if (
+      !isForbiddenContainer(p) &&
+      !badBigOrCluster(p) &&
+      hasMedia(p) &&
+      hasCardText(p)
+    ) {
+      // ensure it's not clearly a multi-card wrapper
+      if (!hasManyCardDescendants(p)) return p;
+    }
+    cur = p;
+  }
+  return el;
+}
+
+function pickContainer(el) {
+  const headingBias = el.closest(
+    "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i]"
+  );
+  const headingCard = headingBias?.closest(`
+    article,[role='article'],li,
+    .post,.news-item,.story,.card,.teaser,.result,.entry,.tile,.search-result,.list-item,
+    [class*="card" i]:not([class*="cards" i]):not([class*="wrapper" i]):not([class*="wrap" i]):not([class*="list" i]):not([class*="grid" i]):not([class*="container" i]):not([class*="content" i]):not([class*="row" i]):not([class*="results" i]):not([class*="blocks" i]):not([class*="block" i]):not([class*="section" i])
+  `);
+
+  const cands = collectCandidates(el);
+
+  let best = null,
+    bestScore = -1e9;
+  for (const { el: cand, depth } of cands) {
+    const s = computeCandidateScore(cand, depth);
+    if (s > bestScore) {
+      bestScore = s;
+      best = cand;
+    }
+  }
+
+  if (headingCard && !badBigOrCluster(headingCard)) {
+    const sHead = computeCandidateScore(headingCard, 0);
+    if (sHead >= bestScore - 5) best = headingCard;
+  }
+
+  best = shrinkIfTooBig(best) || el;
+
+  // NEW: promote to a boundary that includes image + text (handles BBC split wrappers)
+  best = promoteToCardBoundary(best);
+  best = promoteAcrossSiblings(best);
+
+  if (isForbiddenContainer(best) || badBigOrCluster(best)) {
+    const smaller =
+      el.closest?.("article,[role='article'],li") ||
+      el.querySelector?.("article,[role='article'],li,.card,.story,.post") ||
+      null;
+    if (smaller && !badBigOrCluster(smaller) && !isForbiddenContainer(smaller))
+      return smaller;
+    return el;
+  }
   return best;
 }
 
+// -------------------- Text-node anchoring --------------------
+function findFirstMatchingTextNode(root, maxNodes = 3000) {
+  if (!nameRegex || !root) return null;
+  if (root.matches?.("script,style,noscript,template")) return null;
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const t = node.nodeValue;
+      if (!t || t.trim().length === 0) return NodeFilter.FILTER_REJECT;
+      const p = node.parentElement;
+      if (p && typeof getComputedStyle === "function") {
+        const cs = getComputedStyle(p);
+        if (cs && (cs.display === "none" || cs.visibility === "hidden")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+      }
+      return nameRegex.test(t)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+
+  let n = 0,
+    current = walker.nextNode();
+  while (current) {
+    n++;
+    if (n > maxNodes) break;
+    return current;
+  }
+  return null;
+}
+
+// -------------------- Pause helpers --------------------
+function clearEffects() {
+  document
+    .querySelectorAll(".cf-hidden")
+    .forEach((n) => n.classList.remove("cf-hidden"));
+  document
+    .querySelectorAll(".cf-blur")
+    .forEach((n) => n.classList.remove("cf-blur"));
+}
+
+// -------------------- Actions --------------------
 function applyAction(el) {
   if (!shouldTarget(el)) return;
-  const container = getContainer(el);
+
+  const container = pickContainer(el) || el;
+
+  if (!DEBUG_ALERT && container && container.style) {
+    const old = container.style.outline;
+    setTimeout(() => (container.style.outline = old || ""), 600);
+  }
+  if (DEBUG_ALERT) {
+    const sample = (container.innerText || container.textContent || "").slice(
+      0,
+      200
+    );
+    alert("Matched in:\n\n" + sample);
+  }
+
+  if (isForbiddenContainer(container)) return;
+
   switch (settings.mode) {
     case "hide":
       if (!container.classList.contains("cf-hidden")) {
@@ -185,89 +519,82 @@ function applyAction(el) {
       break;
   }
 }
+
 function replaceText(root) {
   if (!nameRegex) return;
-  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(n) {
-      const t = n.nodeValue;
-      if (!t || !t.trim()) return NodeFilter.FILTER_REJECT;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const t = node.nodeValue;
+      if (!t || t.trim().length === 0) return NodeFilter.FILTER_REJECT;
       return nameRegex.test(t)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     },
   });
   const nodes = [];
-  let cur;
-  while ((cur = w.nextNode())) nodes.push(cur);
-  nodes.forEach((n) => {
-    n.nodeValue = n.nodeValue.replace(nameRegex, "████");
+  let current;
+  while ((current = walker.nextNode())) nodes.push(current);
+  nodes.forEach((node) => {
+    node.nodeValue = node.nodeValue.replace(nameRegex, "████");
   });
 }
-function clearEffects() {
-  document
-    .querySelectorAll(".cf-hidden")
-    .forEach((n) => n.classList.remove("cf-hidden"));
-  document
-    .querySelectorAll(".cf-blur")
-    .forEach((n) => n.classList.remove("cf-blur"));
-}
 
-function activeNames() {
-  return settings.enabled ? settings.names || [] : [];
-}
-
+// -------------------- Scan --------------------
 function scan() {
   if (!settings.enabled) {
     clearEffects();
     return 0;
   }
-  nameRegex = buildRegex(activeNames());
+  if (!settings.names || !settings.names.length) {
+    clearEffects();
+    return 0;
+  }
+  nameRegex = buildRegex(settings.names);
   if (!nameRegex) {
     clearEffects();
     return 0;
   }
+
   ensureStyle();
   lastScanBlockedCount = 0;
 
-  document
-    .querySelectorAll(
-      `
+  // Pass 1: likely item containers -> anchor via text node
+  const containers = document.querySelectorAll(`
     article,[role="article"],li,
     .post,.news-item,.story,.card,.teaser,.result,.feed-item,.stream-item,.entry,.tile,.search-result,.list-item,
     [class*="card" i]:not([class*="cards" i]):not([class*="wrapper" i]):not([class*="wrap" i]):not([class*="list" i]):not([class*="grid" i]):not([class*="container" i]):not([class*="content" i]):not([class*="row" i]):not([class*="results" i]):not([class*="blocks" i]):not([class*="block" i]):not([class*="section" i])
-  `
-    )
-    .forEach((c) => {
-      if (!shouldTarget(c) || hasManyCardDescendants(c)) return;
-      const text = (c.innerText || c.textContent || "").slice(0, 10000);
-      if (elementMatchesText(text)) applyAction(c);
-    });
+  `);
+  containers.forEach((c) => {
+    if (!shouldTarget(c)) return;
+    if (hasManyCardDescendants(c)) return;
+    const tn = findFirstMatchingTextNode(c);
+    if (tn) applyAction(tn.parentElement || tn);
+  });
 
-  document
-    .querySelectorAll(
-      `
+  // Pass 2: general textual nodes -> anchor via text node
+  const candidates = document.querySelectorAll(`
     h1,h2,h3,h4,h5,h6,p,a[aria-label],a[title],[role="heading"],[itemprop="headline"],
     [class*="title" i],[class*="headline" i],[class*="post-title" i],
     [class*="story" i],[class*="teaser" i],[class*="desc" i],[class*="description" i],
     [class*="summary" i],[class*="entry" i],[class*="tile" i],[class*="result" i],
     [class*="news" i],[class*="article" i]
-  `
-    )
-    .forEach((el) => {
-      if (!shouldTarget(el)) return;
-      const text = (el.textContent || "").slice(0, 5000);
-      if (elementMatchesText(text)) applyAction(el);
-    });
+  `);
+  candidates.forEach((el) => {
+    if (!shouldTarget(el)) return;
+    const tn = findFirstMatchingTextNode(el);
+    if (tn) applyAction(tn.parentElement || tn);
+  });
 
   return lastScanBlockedCount;
 }
 
+// Live updates for infinite scroll/SPAs
 const debouncedScan = debounce(scan, 200);
 function startObserver() {
   if (observer) observer.disconnect();
-  observer = new MutationObserver((m) => {
-    for (const x of m) {
-      if (x.type === "childList" && (x.addedNodes?.length || 0) > 0) {
+  observer = new MutationObserver((muts) => {
+    for (const m of muts) {
+      if (m.type === "childList" && (m.addedNodes?.length || 0) > 0) {
         debouncedScan();
         break;
       }
@@ -279,7 +606,8 @@ function startObserver() {
   });
 }
 
-chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+// Message from popup: rescan & report count
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "cf_rescan") {
     const count = scan();
     sendResponse({
@@ -292,40 +620,58 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
   }
 });
 
-// normalization: accept old formats
-function normalizeSettings(saved) {
-  const raw = Array.isArray(saved.names) ? saved.names : [];
-  const names = raw
-    .map((n) => (typeof n === "string" ? n : (n && n.text) || ""))
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return {
-    names,
-    mode: saved.mode || "hide",
-    enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
-  };
-}
-
+// Settings init & changes
 function loadSettingsAndInit() {
   chrome.storage.sync.get(null, (all) => {
     if (!all[STORAGE_KEY] && all["pcf_settings"]) {
       chrome.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
     }
   });
+
   chrome.storage.sync.get([STORAGE_KEY], (syncRes) => {
     chrome.storage.local.get([STORAGE_KEY], (localRes) => {
-      settings = normalizeSettings(
-        syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {}
-      );
+      const saved = syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {};
+      settings = {
+        names: Array.isArray(saved.names) ? saved.names : [],
+        mode: saved.mode || "hide",
+        enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
+      };
+      nameRegex = buildRegex(settings.names);
       scan();
       startObserver();
     });
   });
 }
+
+chrome.storage.sync.get(null, (all) => {
+  if (!all[STORAGE_KEY] && all["pcf_settings"]) {
+    chrome.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
+  }
+});
+
 chrome.storage.onChanged.addListener((changes, area) => {
   if ((area !== "sync" && area !== "local") || !changes[STORAGE_KEY]) return;
-  settings = normalizeSettings(changes[STORAGE_KEY].newValue || {});
-  if (!settings.enabled) clearEffects();
+  const newVal = changes[STORAGE_KEY].newValue || {};
+  settings = {
+    names: Array.isArray(newVal.names) ? newVal.names : [],
+    mode: newVal.mode || "hide",
+    enabled: typeof newVal.enabled === "boolean" ? newVal.enabled : true,
+  };
+  nameRegex = buildRegex(settings.names);
+
+  if (!settings.enabled) {
+    clearEffects();
+    return;
+  }
+
+  document
+    .querySelectorAll(".cf-hidden")
+    .forEach((n) => n.classList.remove("cf-hidden"));
+  document
+    .querySelectorAll(".cf-blur")
+    .forEach((n) => n.classList.remove("cf-blur"));
   scan();
 });
+
 loadSettingsAndInit();
+// ------------------------------------------------

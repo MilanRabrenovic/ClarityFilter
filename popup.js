@@ -1,23 +1,28 @@
-// popup.js — global pause only
+// popup.js
 const STORAGE_KEY = "cf_settings";
-const LEGACY_KEYS = ["pcf_settings"];
+const LEGACY_KEYS = ["pcf_settings"]; // migrate old installs
 
 const nameInput = document.getElementById("nameInput");
 const addBtn = document.getElementById("addBtn");
+const addForm = document.getElementById("addForm"); // NEW
 const chipsEl = document.getElementById("chips");
 const modeEl = document.getElementById("mode");
 const statusEl = document.getElementById("status");
-const masterToggle = document.getElementById("masterToggle");
+const cfEnabled = document.getElementById("cfEnabled");
 
 let state = { names: [], mode: "hide", enabled: true };
 
-// storage helpers
-const getSync = (k) => new Promise((res) => chrome.storage.sync.get(k, res));
-const getLocal = (k) => new Promise((res) => chrome.storage.local.get(k, res));
-const setSync = (o) => new Promise((res) => chrome.storage.sync.set(o, res));
-const setLocal = (o) => new Promise((res) => chrome.storage.local.set(o, res));
-const removeSync = (k) =>
-  new Promise((res) => chrome.storage.sync.remove(k, res));
+// ------ storage helpers ------
+const getSync = (keys) =>
+  new Promise((res) => chrome.storage.sync.get(keys, res));
+const getLocal = (keys) =>
+  new Promise((res) => chrome.storage.local.get(keys, res));
+const setSync = (obj) =>
+  new Promise((res) => chrome.storage.sync.set(obj, res));
+const setLocal = (obj) =>
+  new Promise((res) => chrome.storage.local.set(obj, res));
+const removeSync = (keys) =>
+  new Promise((res) => chrome.storage.sync.remove(keys, res));
 
 async function migrateIfNeeded() {
   const syncAll = await getSync(null);
@@ -31,18 +36,15 @@ async function migrateIfNeeded() {
     }
   }
 }
+
 function normalize(saved) {
-  const raw = Array.isArray(saved.names) ? saved.names : [];
-  const names = raw
-    .map((n) => (typeof n === "string" ? n : (n && n.text) || ""))
-    .map((s) => s.trim())
-    .filter(Boolean);
   return {
-    names,
+    names: Array.isArray(saved.names) ? saved.names.slice(0, 200) : [],
     mode: saved.mode || "hide",
     enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
   };
 }
+
 async function loadState() {
   await migrateIfNeeded();
   const [syncRes, localRes] = await Promise.all([
@@ -51,6 +53,7 @@ async function loadState() {
   ]);
   return normalize(syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {});
 }
+
 async function saveState(s) {
   await Promise.allSettled([
     setSync({ [STORAGE_KEY]: s }),
@@ -58,20 +61,19 @@ async function saveState(s) {
   ]);
 }
 
-// UI
+// ------ UI ------
 function renderChips() {
   chipsEl.innerHTML = "";
-  state.names.forEach((text, idx) => {
+  state.names.forEach((n, idx) => {
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.textContent = text;
+    chip.textContent = n;
 
     const x = document.createElement("button");
     x.className = "x";
+    x.setAttribute("aria-label", `Remove ${n}`);
     x.textContent = "×";
-    x.setAttribute("aria-label", `Remove ${text}`);
-    x.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
+    x.addEventListener("click", async () => {
       state.names.splice(idx, 1);
       renderChips();
       await save();
@@ -82,22 +84,43 @@ function renderChips() {
   });
 }
 
-async function addName() {
+// NEW: robust add that clears input immediately and supports comma/semicolon lists
+async function addNameImmediate() {
   const raw = (nameInput.value || "").trim();
   if (!raw) return;
-  if (!state.names.includes(raw)) {
-    state.names.push(raw);
+
+  // Clear immediately for snappy UX (prevents async races)
+  nameInput.value = "";
+  // keep focus for rapid entry
+  nameInput.focus();
+
+  const parts = raw
+    .split(/[;,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  let changed = false;
+  for (const p of parts) {
+    if (p && !state.names.includes(p)) {
+      state.names.push(p);
+      changed = true;
+    }
+  }
+  if (changed) {
     renderChips();
     await save();
+  } else {
+    // no-op, still show saved status briefly so user gets feedback
+    statusEl.textContent = "No new terms";
+    setTimeout(() => (statusEl.textContent = ""), 900);
   }
-  nameInput.value = "";
-  nameInput.focus();
 }
 
 function rescanActiveTabAndShowCount() {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs && tabs[0];
     if (!tab?.id) return;
+
     chrome.tabs.sendMessage(tab.id, { type: "cf_rescan" }, (resp) => {
       if (chrome.runtime.lastError) {
         statusEl.textContent = "Refresh the page";
@@ -114,11 +137,12 @@ function rescanActiveTabAndShowCount() {
 
 async function load() {
   state = await loadState();
-  masterToggle.checked = !!state.enabled;
   modeEl.value = state.mode;
+  cfEnabled.checked = !!state.enabled;
   renderChips();
   rescanActiveTabAndShowCount();
 }
+
 async function save() {
   await saveState(state);
   statusEl.textContent = "Saved";
@@ -127,20 +151,30 @@ async function save() {
 }
 
 // events
-addBtn.addEventListener("click", addName);
-nameInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    addName();
-  }
+// CHANGED: handle both click and Enter via form submit
+addForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  addNameImmediate();
 });
+
+// If you still want the button to work without a form submit (redundant but fine)
+addBtn.addEventListener("click", (e) => {
+  e.preventDefault();
+  addNameImmediate();
+});
+
+// No need for a keydown listener now, submit covers Enter.
+// mode & toggle stay the same
 modeEl.addEventListener("change", async () => {
   state.mode = modeEl.value;
   await save();
 });
-masterToggle.addEventListener("change", async () => {
-  state.enabled = masterToggle.checked;
+cfEnabled.addEventListener("change", async () => {
+  state.enabled = cfEnabled.checked;
   await save();
 });
 
-document.addEventListener("DOMContentLoaded", load);
+// init
+document.addEventListener("DOMContentLoaded", () => {
+  load();
+});

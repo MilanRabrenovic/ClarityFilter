@@ -6,20 +6,38 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header class="row">
-      <h1>ClarityFilter</h1>
+    <header
+      class="row"
+      style="
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      "
+    >
+      <h1 style="margin: 0; font-size: 16px">ClarityFilter</h1>
       <label class="switch" title="Pause/Resume filtering">
-        <input id="masterToggle" type="checkbox" />
+        <input id="cfEnabled" type="checkbox" />
         <span class="slider"></span>
       </label>
     </header>
 
     <section>
-      <label for="nameInput">Add a name/term you are sick of</label>
-      <div class="add-row">
-        <input id="nameInput" type="text" placeholder="I'm sick of:" />
-        <button id="addBtn" type="button" title="Add">Add</button>
-      </div>
+      <label for="nameInput">Add a term you want to block</label>
+
+      <form id="addForm" class="add-row" style="display: flex; gap: 6px">
+        <input
+          id="nameInput"
+          type="text"
+          placeholder="I'm sick of:"
+          style="flex: 1; padding: 6px 8px"
+          autocomplete="off"
+        />
+        <button id="addBtn" type="submit" title="Add" style="padding: 6px 10px">
+          Add
+        </button>
+      </form>
+
       <div id="chips" class="chips" aria-live="polite"></div>
     </section>
 
