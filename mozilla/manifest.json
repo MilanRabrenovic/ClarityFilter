@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "ClarityFilter",
-  "version": "0.2.4",
+  "version": "0.3.1",
   "description": "Hide or blur articles that mention names you choose.",
   "permissions": [
     "storage",
