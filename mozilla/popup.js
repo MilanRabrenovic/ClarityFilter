@@ -169,7 +169,34 @@ function vlistRender() {
     `;
   }
   vlistInner.style.transform = `translateY(${offsetY}px)`;
-  vlistInner.innerHTML = html;
+
+  const frag = document.createDocumentFragment();
+  for (let i = startIndex; i < endIndex; i++) {
+    const term = vlist.data[i] ?? "";
+
+    const row = document.createElement("div");
+    row.className = "vlist-row";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-label", term);
+
+    const span = document.createElement("span");
+    span.className = "vlist-term";
+    span.title = term;
+    span.textContent = term;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "row-del vlist-del";
+    btn.dataset.index = String(i);
+    btn.title = `Remove ${term}`;
+    btn.setAttribute("aria-label", `Remove ${term}`);
+    btn.textContent = "×"; // safe, not HTML
+
+    row.append(span, btn);
+    frag.appendChild(row);
+  }
+
+  vlistInner.replaceChildren(frag);
 }
 
 // ---------- Virtualized list renderers (WHITELIST) ----------
@@ -208,7 +235,31 @@ function wlistRender() {
     `;
   }
   wlInner.style.transform = `translateY(${offsetY}px)`;
-  wlInner.innerHTML = html;
+  const frag = document.createDocumentFragment();
+  whitelist.forEach((host, i) => {
+    const row = document.createElement("div");
+    row.className = "vlist-row";
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-label", host);
+
+    const span = document.createElement("span");
+    span.className = "vlist-term";
+    span.title = host;
+    span.textContent = host;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "row-del wl-del";
+    btn.dataset.index = String(i);
+    btn.title = `Remove ${host}`;
+    btn.setAttribute("aria-label", `Remove ${host}`);
+    btn.textContent = "×";
+
+    row.append(span, btn);
+    frag.appendChild(row);
+  });
+
+  wlInner.replaceChildren(frag);
 }
 
 // ---------- Scroll/resize ----------
