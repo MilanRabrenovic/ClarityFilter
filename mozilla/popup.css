@@ -18,12 +18,14 @@ header h1 {
 section {
   margin-bottom: 10px;
 }
+
 label {
   font-weight: 600;
   display: block;
   margin-bottom: 6px;
 }
 
+/* ───────── Add row */
 .add-row {
   display: flex;
   gap: 6px;
@@ -41,141 +43,64 @@ label {
   color: #fff;
   cursor: pointer;
 }
+
 .list-wrap {
   margin-top: 8px;
 }
 
+/* ───────── Virtual list */
 .vlist-viewport {
   position: relative;
+  overflow: auto;
+  height: 240px;
+  max-height: 220px; /* keep if you want an upper cap */
+  min-height: 120px;
   border: 1px solid rgba(125, 125, 125, 0.25);
   border-radius: 8px;
-  overflow: auto;
-  max-height: 220px; /* You can tweak this to taste */
-  min-height: 120px;
   background: rgba(125, 125, 125, 0.06);
-}
 
-/* Total scrollable height shim */
+  /* Hide native scrollbar (still scrollable) */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge Legacy */
+}
+.vlist-viewport::-webkit-scrollbar {
+  display: none;
+} /* Chrome/Safari/Edge */
+
 .vlist-spacer {
-  height: 0px; /* will be set via JS */
+  height: 0; /* set via JS */
+  pointer-events: none; /* spacer should never eat clicks */
 }
 
-/* Where visible rows are placed */
 .vlist-inner {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto 0; /* top:0; left:0; right:0 */
+  z-index: 2;
+  pointer-events: auto;
 }
 
-/* A single row */
 .vlist-row {
+  height: 28px; /* itemHeight in JS must match this */
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  height: 28px; /* itemHeight in JS must match this */
   box-sizing: border-box;
   border-bottom: 1px dashed rgba(125, 125, 125, 0.2);
 }
 .vlist-row:last-child {
   border-bottom: 0;
 }
+
 .vlist-term {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.list-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 6px;
-}
-.muted {
-  font-size: 12px;
-  opacity: 0.8;
-}
-.linklike {
-  background: transparent;
-  border: 0;
-  color: #2563eb;
-  cursor: pointer;
-  padding: 0;
-}
-
-/* ---- Virtual list hit-test sanity ---- */
-.vlist-viewport {
-  position: relative;
-  overflow: auto;
-  height: 240px;
-}
-#vlistSpacer {
-  pointer-events: none;
-} /* spacer should never eat clicks */
-#vlistInner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 2;
-  pointer-events: auto;
-}
-.vlist-row {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.linklike:hover {
-  text-decoration: underline;
-}
-
-.vlist-viewport {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge Legacy */
-}
-
-.vlist-viewport::-webkit-scrollbar {
-  display: none; /* Chrome/Safari/Edge */
-}
-/* Ensure rows are hit-testable */
-.vlist-viewport {
-  position: relative;
-  overflow: auto;
-  height: 240px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-}
-.vlist-spacer {
-  height: 0;
-  pointer-events: none;
-}
-.vlist-inner {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-.vlist-row {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 6px;
-}
-.vlist-term {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   max-width: 220px;
 }
+
+/* row delete buttons (shared) */
 .vlist-del,
 .wl-del {
   width: 22px;
@@ -183,118 +108,51 @@ label {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-
   border: none;
   border-radius: 6px;
   background: transparent;
   color: currentColor;
-
   font-size: 14px;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
   padding: 0;
 }
-
 .vlist-del:hover,
 .wl-del:hover {
   background: rgba(125, 125, 125, 0.12);
 }
-
 .vlist-del:active,
 .wl-del:active {
   background: rgba(125, 125, 125, 0.2);
 }
 
+/* ───────── List footer / links */
 .list-footer {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   margin-top: 6px;
 }
 .muted {
-  color: #666;
   font-size: 12px;
+  opacity: 0.8;
+  color: #666;
 }
+
 .linklike {
   background: none;
   border: none;
-  color: #06c;
+  color: #10b981;
   cursor: pointer;
-  text-decoration: underline;
   padding: 0;
+  text-decoration: underline;
+}
+.linklike:hover {
+  text-decoration: underline;
 }
 
-/* Hide native scrollbar (still scrollable) */
-.vlist-viewport {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.vlist-viewport::-webkit-scrollbar {
-  display: none;
-}
-
-/* switch ... keep your existing styles */
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 34px;
-  height: 20px;
-}
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.slider {
-  position: absolute;
-  cursor: pointer;
-  inset: 0;
-  background: #ccc;
-  transition: 0.2s;
-  border-radius: 20px;
-}
-.slider:before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 2px;
-  top: 2px;
-  background: white;
-  transition: 0.2s;
-  border-radius: 50%;
-}
-.switch input:checked + .slider {
-  background: #4caf50;
-}
-.switch input:checked + .slider:before {
-  transform: translateX(14px);
-}
-
-.mode select {
-  width: 100%;
-  padding: 6px;
-}
-
-footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-button#save {
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: #3b82f6;
-  color: #fff;
-  cursor: pointer;
-}
-#status {
-  font-size: 12px;
-  opacity: 0.8;
-}
-/* Slider-style toggle (first version) */
+/* ───────── Switch (slider-style toggle — single canonical version) */
 .switch {
   position: relative;
   display: inline-block;
@@ -306,6 +164,7 @@ button#save {
   width: 0;
   height: 0;
 }
+
 .slider {
   position: absolute;
   inset: 0;
@@ -333,9 +192,33 @@ button#save {
 .switch input:checked + .slider:before {
   transform: translateX(18px);
 }
-
-/* (optional) keyboard focus ring */
 .switch input:focus-visible + .slider {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
+}
+
+/* ───────── Misc */
+.mode select {
+  width: 100%;
+  padding: 6px;
+}
+
+footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+button#save {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+}
+
+#status {
+  font-size: 12px;
+  opacity: 0.8;
 }
