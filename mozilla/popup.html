@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>ClarityFilter</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header
+      class="row"
+      style="
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      "
+    >
+      <h1 style="margin: 0; font-size: 16px">ClarityFilter</h1>
+      <label class="switch" title="Pause/Resume filtering">
+        <input id="cfEnabled" type="checkbox" />
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <!-- Blocked terms -->
+    <section>
+      <label for="nameInput">Add a term you want to block</label>
+      <form id="addForm" class="add-row" style="display: flex; gap: 6px">
+        <input
+          id="nameInput"
+          type="text"
+          placeholder="I'm sick of:"
+          style="flex: 1; padding: 6px 8px"
+          autocomplete="off"
+        />
+        <button id="addBtn" type="submit" title="Add" style="padding: 6px 10px">
+          Add
+        </button>
+      </form>
+
+      <div class="list-wrap">
+        <div
+          id="listViewport"
+          class="vlist-viewport"
+          role="listbox"
+          aria-label="Blocked terms"
+          aria-live="polite"
+        >
+          <div id="vlistSpacer" class="vlist-spacer"></div>
+          <div id="vlistInner" class="vlist-inner"></div>
+        </div>
+
+        <div class="list-footer">
+          <span id="termCount" class="muted"></span>
+          <button id="bulkClear" class="linklike" title="Remove all terms">
+            Clear all
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="mode">
+      <label for="mode">Action</label>
+      <select id="mode">
+        <option value="hide">Hide</option>
+        <option value="blur">Blur</option>
+      </select>
+    </section>
+
+    <!-- Whitelist sites -->
+    <section style="margin-top: 12px">
+      <label for="wlInput">Whitelist sites (no filtering)</label>
+      <div class="muted" style="margin: 4px 0 6px 0; font-size: 12px">
+        Examples: <code>example.com</code>, <code>news.bbc.co.uk</code>, or full
+        URL like <code>https://example.com</code>
+      </div>
+
+      <form id="wlForm" class="add-row" style="display: flex; gap: 6px">
+        <input
+          id="wlInput"
+          type="text"
+          placeholder="example.com"
+          style="flex: 1; padding: 6px 8px"
+          autocomplete="off"
+        />
+        <button
+          id="wlAddBtn"
+          type="submit"
+          title="Add"
+          style="padding: 6px 10px"
+        >
+          Add
+        </button>
+      </form>
+
+      <div class="list-wrap">
+        <div
+          id="wlViewport"
+          class="vlist-viewport"
+          role="listbox"
+          aria-label="Whitelisted sites"
+          aria-live="polite"
+        >
+          <div id="wlSpacer" class="vlist-spacer"></div>
+          <div id="wlInner" class="vlist-inner"></div>
+        </div>
+
+        <div class="list-footer">
+          <span id="wlCount" class="muted"></span>
+          <button id="wlClearBtn" class="linklike" title="Remove all sites">
+            Clear all
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span id="status" role="status" aria-live="polite"></span>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
