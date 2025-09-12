@@ -1,23 +1,23 @@
 {
-  "manifest_version": 4,
+  "manifest_version": 3,
   "name": "ClarityFilter",
-  "version": "0.2.4",
+  "short_name": "ClarityFilter",
+  "version": "0.3.8",
   "description": "Hide or blur articles that mention names you choose.",
   "permissions": [
     "storage",
     "tabs"
   ],
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  "icons": {
-    "16": "icon-16.png",
-    "32": "icon-32.png",
-    "48": "icon-48.png",
-    "64": "icon-64.png",
-    "128": "icon-128.png",
-    "256": "icon-256.png",
-    "512": "icon-512.png"
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "toggle-filter": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "Toggle ClarityFilter on/off"
+    }
   },
   "action": {
     "default_popup": "popup.html",
@@ -27,6 +27,15 @@
       "32": "icon-32.png",
       "48": "icon-48.png"
     }
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "64": "icon-64.png",
+    "128": "icon-128.png",
+    "256": "icon-256.png",
+    "512": "icon-512.png"
   },
   "content_scripts": [
     {
@@ -40,11 +49,5 @@
       "run_at": "document_idle",
       "all_frames": true
     }
-  ],
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "clarityfilter@solid.develop",
-      "strict_min_version": "109.0"
-    }
-  }
+  ]
 }

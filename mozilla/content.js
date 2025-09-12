@@ -66,18 +66,13 @@ function buildRegex(names) {
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")); // escape
-
+    .map((n) => n.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&"));
   if (!cleaned.length) return null;
 
-  const core = `(?:${cleaned.join("|")})`;
-
-  // Prefer Unicode "word boundary" via lookarounds: not a letter/number/_ on each side
+  const core = `(?:${cleaned.join("|")})(?:[\\p{L}]{0,4})?`;
   try {
     return new RegExp(`(?<![\\p{L}\\p{N}_])${core}(?![\\p{L}\\p{N}_])`, "iu");
   } catch {
-    // Fallback without lookbehind (keeps surrounding char via capture groups)
-    // NOTE: if you use this fallback in replaceText, replace with `$1████$2`
     return new RegExp(`(^|[^\\p{L}\\p{N}_])${core}($|[^\\p{L}\\p{N}_])`, "iu");
   }
 }
@@ -538,24 +533,17 @@ function replaceText(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const t = node.nodeValue;
-      if (!t || !t.trim()) return NodeFilter.FILTER_REJECT;
+      if (!t || t.trim().length === 0) return NodeFilter.FILTER_REJECT;
       return nameRegex.test(t)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     },
   });
-
   const nodes = [];
   let current;
   while ((current = walker.nextNode())) nodes.push(current);
-
-  const usesFallback = nameRegex.source.startsWith("(^|");
-
   nodes.forEach((node) => {
-    node.nodeValue = node.nodeValue.replace(
-      nameRegex,
-      usesFallback ? "$1████$2" : "████"
-    );
+    node.nodeValue = node.nodeValue.replace(nameRegex, "████");
   });
 }
 

@@ -3,7 +3,7 @@
 
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
-let settings = { names: [], mode: "hide", enabled: true };
+let settings = { names: [], mode: "hide", enabled: true, whitelist: [] };
 let nameRegex = null;
 let observer = null;
 
@@ -29,6 +29,35 @@ function debounce(fn, wait = 150) {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), wait);
   };
+}
+
+// ---- Whitelist helpers ----
+function toHost(value) {
+  if (!value) return null;
+  let v = String(value).trim().toLowerCase();
+  // try parse as URL
+  try {
+    const u = new URL(v.includes("://") ? v : `https://${v}`);
+    return u.hostname || null;
+  } catch {
+    // last resort: strip any leading scheme-like text
+    return v.replace(/^[a-z]+:\/\//, "").split("/")[0] || null;
+  }
+}
+function isHostMatch(currentHost, patternHost) {
+  if (!currentHost || !patternHost) return false;
+  if (currentHost === patternHost) return true;
+  // subdomain suffix match (e.g. news.bbc.co.uk matches bbc.co.uk)
+  return currentHost.endsWith("." + patternHost);
+}
+function isWhitelisted(url, list) {
+  const h = toHost(url);
+  if (!h || !Array.isArray(list) || !list.length) return false;
+  for (const ent of list) {
+    const ph = toHost(ent);
+    if (ph && isHostMatch(h, ph)) return true;
+  }
+  return false;
 }
 
 // Unicode-aware regex; allow short case endings (e.g., "Vučiću")
@@ -249,14 +278,11 @@ function tokenScore(el) {
   let s = 0;
   for (const t of toks) if (ITEM_HINTS.has(t)) s += 8;
   for (const t of toks) if (WRAPPER_HINTS.has(t)) s -= 8;
-
-  // Bonus if data-testid hints at a card
   const dt = (el.getAttribute("data-testid") || "").toLowerCase();
   if (dt.includes("card") || dt.includes("promo") || dt.includes("article"))
     s += 10;
   if (dt.includes("grid") || dt.includes("list") || dt.includes("wrapper"))
     s -= 10;
-
   return s;
 }
 function isArticleish(el) {
@@ -343,38 +369,28 @@ function collectCandidates(startEl) {
   }
   return out;
 }
-
-// If media and text live in separate siblings,
-// prefer the smallest parent that contains BOTH, but not a multi-card wrapper.
 function promoteAcrossSiblings(el) {
   if (!el || !el.parentElement) return el;
   const parent = el.parentElement;
-
   const parentHasMedia = !!parent.querySelector(
     "img, picture, video, [style*='background-image' i], [class*='media' i], [data-testid*='media' i]"
   );
   const parentHasText = !!parent.querySelector(
     "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i],[class*='description' i],p,[data-testid*='text' i]"
   );
-
-  // avoid picking a grid/list wrapper that clearly holds multiple cards
   const looksMulti =
     hasManyCardDescendants(parent) ||
     looksLikeWrapper(parent) ||
     looksHuge(parent);
-
   if (
     parentHasMedia &&
     parentHasText &&
     !looksMulti &&
     !isForbiddenContainer(parent)
-  ) {
+  )
     return parent;
-  }
   return el;
 }
-
-// If the chosen node is only the text wrapper, promote to the smallest parent that contains BOTH media and card text
 function promoteToCardBoundary(el) {
   let cur = el;
   for (let i = 0; i < 4 && cur && cur.parentElement; i++) {
@@ -385,14 +401,12 @@ function promoteToCardBoundary(el) {
       hasMedia(p) &&
       hasCardText(p)
     ) {
-      // ensure it's not clearly a multi-card wrapper
       if (!hasManyCardDescendants(p)) return p;
     }
     cur = p;
   }
   return el;
 }
-
 function pickContainer(el) {
   const headingBias = el.closest(
     "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i]"
@@ -404,7 +418,6 @@ function pickContainer(el) {
   `);
 
   const cands = collectCandidates(el);
-
   let best = null,
     bestScore = -1e9;
   for (const { el: cand, depth } of cands) {
@@ -414,15 +427,11 @@ function pickContainer(el) {
       best = cand;
     }
   }
-
   if (headingCard && !badBigOrCluster(headingCard)) {
     const sHead = computeCandidateScore(headingCard, 0);
     if (sHead >= bestScore - 5) best = headingCard;
   }
-
   best = shrinkIfTooBig(best) || el;
-
-  // NEW: promote to a boundary that includes image + text (handles BBC split wrappers)
   best = promoteToCardBoundary(best);
   best = promoteAcrossSiblings(best);
 
@@ -497,7 +506,6 @@ function applyAction(el) {
     );
     alert("Matched in:\n\n" + sample);
   }
-
   if (isForbiddenContainer(container)) return;
 
   switch (settings.mode) {
@@ -541,6 +549,12 @@ function replaceText(root) {
 
 // -------------------- Scan --------------------
 function scan() {
+  // Whitelist takes precedence
+  if (isWhitelisted(location.href, settings.whitelist)) {
+    clearEffects();
+    return 0;
+  }
+
   if (!settings.enabled) {
     clearEffects();
     return 0;
@@ -549,6 +563,7 @@ function scan() {
     clearEffects();
     return 0;
   }
+
   nameRegex = buildRegex(settings.names);
   if (!nameRegex) {
     clearEffects();
@@ -615,6 +630,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       regex: nameRegex ? nameRegex.toString() : null,
       mode: settings.mode,
       enabled: settings.enabled,
+      whitelisted: isWhitelisted(location.href, settings.whitelist),
+      host: location.hostname,
     });
     return true;
   }
@@ -622,6 +639,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Settings init & changes
 function loadSettingsAndInit() {
+  // one-time legacy migration for overall object
   chrome.storage.sync.get(null, (all) => {
     if (!all[STORAGE_KEY] && all["pcf_settings"]) {
       chrome.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
@@ -635,6 +653,7 @@ function loadSettingsAndInit() {
         names: Array.isArray(saved.names) ? saved.names : [],
         mode: saved.mode || "hide",
         enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
+        whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -656,10 +675,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     names: Array.isArray(newVal.names) ? newVal.names : [],
     mode: newVal.mode || "hide",
     enabled: typeof newVal.enabled === "boolean" ? newVal.enabled : true,
+    whitelist: Array.isArray(newVal.whitelist) ? newVal.whitelist : [],
   };
   nameRegex = buildRegex(settings.names);
 
-  if (!settings.enabled) {
+  if (!settings.enabled || isWhitelisted(location.href, settings.whitelist)) {
     clearEffects();
     return;
   }
