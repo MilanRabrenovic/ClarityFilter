@@ -1,4 +1,4 @@
-// ClarityFilter - content script (Manifest V3)
+// ClarityFilter - content script (Manifest V2)
 // ------------------------------------------------
 
 let lastScanBlockedCount = 0;
@@ -18,6 +18,43 @@ function ensureStyle() {
   style.textContent = `
     .cf-blur { filter: blur(10px) !important; }
     .cf-hidden { display: none !important; }
+
+    /* === NEW: overlay system for pixelate === */
+    .cf-obscured { position: relative !important; }
+    .cf-overlay {
+      position: absolute !important;
+      inset: 0 !important;
+      z-index: 2147483647 !important;
+      pointer-events: none !important;
+    }
+    /* Pixelate look via two perpendicular repeating gradients (mosaic) */
+    .cf-overlay.pixelate {
+      --cf-cell: 15px;                /* size of each “pixel” square */
+      --cf-a: rgba(0,0,0,.92);
+      --cf-b: #fff;
+
+      /* fallback checkerboard (works everywhere) */
+      background:
+        linear-gradient(90deg, var(--cf-a) 50%, var(--cf-b) 0) 0 0 / var(--cf-cell) var(--cf-cell),
+        linear-gradient(      var(--cf-a) 50%, var(--cf-b) 0) 0 0 / var(--cf-cell) var(--cf-cell);
+      background-size: calc(2 * var(--cf-cell)) calc(2 * var(--cf-cell));
+      background-position: 0 0, var(--cf-cell) var(--cf-cell);
+      mix-blend-mode: multiply;
+      opacity: 1 !important;
+      backdrop-filter: saturate(.7) contrast(1.1); /* optional: makes text underneath less legible */
+    }
+
+    /* Prefer repeating-conic-gradient when supported (crisper squares) */
+    @supports (background: repeating-conic-gradient(#000 0 25%, #111 0 50%)) {
+      .cf-overlay.pixelate {
+        background: repeating-conic-gradient(
+          from 0deg,
+          var(--cf-a) 0 25%,
+          var(--cf-b) 0 50%
+        );
+        background-size: var(--cf-cell) var(--cf-cell);
+      }
+    }
   `;
   document.documentElement.appendChild(style);
 }
@@ -29,6 +66,24 @@ function debounce(fn, wait = 150) {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), wait);
   };
+}
+
+function addOverlay(container, cls) {
+  if (!container || !container.appendChild) return;
+  // If already obscured, don't add again
+  if (container.querySelector(":scope > .cf-overlay")) return;
+
+  container.classList.add("cf-obscured");
+  const ov = document.createElement("div");
+  ov.className = `cf-overlay ${cls}`;
+  container.appendChild(ov);
+}
+
+function removeOverlays(root = document) {
+  root.querySelectorAll(".cf-overlay").forEach((n) => n.remove());
+  root
+    .querySelectorAll(".cf-obscured")
+    .forEach((n) => n.classList.remove("cf-obscured"));
 }
 
 // ---- Whitelist helpers ----
@@ -66,10 +121,10 @@ function buildRegex(names) {
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
-    .map((n) => n.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&"));
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   if (!cleaned.length) return null;
 
-  const core = `(?:${cleaned.join("|")})(?:[\\p{L}]{0,4})?`;
+  const core = `(?:${cleaned.join("|")})`; // <-- no suffix
   try {
     return new RegExp(`(?<![\\p{L}\\p{N}_])${core}(?![\\p{L}\\p{N}_])`, "iu");
   } catch {
@@ -85,7 +140,9 @@ function elementMatchesText(text) {
 function shouldTarget(el) {
   if (!el || !el.classList) return true;
   return (
-    !el.classList.contains("cf-blur") && !el.classList.contains("cf-hidden")
+    !el.classList.contains("cf-blur") &&
+    !el.classList.contains("cf-hidden") &&
+    !el.classList.contains("cf-obscured") // NEW
   );
 }
 
@@ -487,6 +544,7 @@ function clearEffects() {
   document
     .querySelectorAll(".cf-blur")
     .forEach((n) => n.classList.remove("cf-blur"));
+  removeOverlays(document); // NEW
 }
 
 // -------------------- Actions --------------------
@@ -494,6 +552,8 @@ function applyAction(el) {
   if (!shouldTarget(el)) return;
 
   const container = pickContainer(el) || el;
+
+  if (container.querySelector(":scope > .cf-overlay")) return;
 
   if (!DEBUG_ALERT && container && container.style) {
     const old = container.style.outline;
@@ -520,6 +580,10 @@ function applyAction(el) {
         container.classList.add("cf-blur");
         lastScanBlockedCount++;
       }
+      break;
+    case "pixelate":
+      addOverlay(container, "pixelate");
+      lastScanBlockedCount++;
       break;
     case "replace":
       replaceText(container);
@@ -690,6 +754,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   document
     .querySelectorAll(".cf-blur")
     .forEach((n) => n.classList.remove("cf-blur"));
+  removeOverlays(document);
   scan();
 });
 
