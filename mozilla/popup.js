@@ -69,6 +69,22 @@ async function migrateIfNeeded() {
   }
 }
 
+function toHost(value) {
+  if (!value) return null;
+  let v = String(value).trim().toLowerCase();
+  // strip leading dots and trailing slashes early to avoid edge mismatches
+  v = v.replace(/^\.+/, "").replace(/\/+$/, "");
+  try {
+    const u = new URL(v.includes("://") ? v : `https://${v}`);
+    return (u.hostname || "").toLowerCase();
+  } catch {
+    return v
+      .replace(/^[a-z]+:\/\//, "")
+      .split("/")[0]
+      .toLowerCase();
+  }
+}
+
 // --- PIN helpers (popup) ---
 function hasPinLocal() {
   return !!(state.pinHash && state.pinSalt);
@@ -378,12 +394,15 @@ async function removeWLByIndex(idx) {
     setStatus("Bad index", 900);
     return;
   }
+  if (!(await verifyPinInput())) return;
+
   state.whitelist.splice(idx, 1);
   updateWLCount();
   await save();
   wlistSetData(state.whitelist);
   setStatus("Removed", 700);
 }
+
 wlInner.addEventListener(
   "pointerdown",
   (e) => {
@@ -456,24 +475,24 @@ async function addNameImmediate() {
     setStatus("Added", 700);
   } else setStatus("No new terms", 900);
 }
+
 async function addWLImmediate() {
   const raw = (wlInput.value || "").trim();
   if (!raw) return;
   wlInput.value = "";
   wlInput.focus();
 
-  // Normalize to hostname if possible, but keep original if parsing fails
-  let host = raw;
-  try {
-    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
-    host = u.hostname.toLowerCase();
-  } catch {
-    // try basic cleanup
-    host = raw
-      .replace(/^[a-z]+:\/\//, "")
-      .split("/")[0]
-      .toLowerCase();
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await verifyPinInput();
+    if (!ok) {
+      setStatus("PIN required", 1200);
+      return;
+    }
   }
+
+  const host = toHost(raw); // <— use the same logic
   if (!host) {
     setStatus("Invalid site", 900);
     return;
@@ -484,9 +503,8 @@ async function addWLImmediate() {
     updateWLCount();
     await save();
     wlistSetData(state.whitelist);
-    setStatus("Whitelisted", 700);
-    // optional: trigger a rescan + status in active tab
-    rescanActiveTabAndShowCount();
+    setStatus(`Whitelisted: ${host}`, 900);
+    rescanActiveTabAndShowCount(); // will clear page effects
   } else {
     setStatus("Already whitelisted", 900);
   }
@@ -582,15 +600,11 @@ openOptionsPageBtn?.addEventListener("click", () => {
 cfEnabled.addEventListener("change", async () => {
   const wantsEnabled = cfEnabled.checked;
 
-  // Check if a PIN is required
   const all = await getSync([STORAGE_KEY]);
   const s = all[STORAGE_KEY] || {};
   if (s.pinEnabled && s.pinHash && s.pinSalt) {
-    const ok = await requirePinFromActiveTab(
-      wantsEnabled ? "turn filtering ON" : "turn filtering OFF"
-    );
+    const ok = await verifyPinInput(); // prompt INSIDE popup
     if (!ok) {
-      // revert UI, bail
       cfEnabled.checked = !wantsEnabled;
       setStatus("PIN required", 1200);
       return;

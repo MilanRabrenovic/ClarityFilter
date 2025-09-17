@@ -123,7 +123,8 @@ function isWhitelisted(url, list) {
   if (!h || !Array.isArray(list) || !list.length) return false;
   for (const ent of list) {
     const ph = toHost(ent);
-    if (ph && isHostMatch(h, ph)) return true;
+    if (!ph) continue; // ignore bad entries
+    if (h === ph || h.endsWith("." + ph)) return true;
   }
   return false;
 }
@@ -244,7 +245,7 @@ async function requirePin(reason = "change settings") {
   const input = prompt(`Enter PIN to ${reason}:`);
   if (input == null) return false; // cancelled
   try {
-    const hash = await sha256Hex(`${s.pinSalt}|${input}`);
+    const hash = await sha256Hex(`${s.pinSalt}:${input}`);
     return hash === s.pinHash;
   } catch {
     return false;

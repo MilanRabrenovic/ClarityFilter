@@ -68,13 +68,10 @@ async function verifyViaInjectedPrompt(reason, salt, expectedHash) {
 async function ensurePinAuthorized(reason, s) {
   if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
 
-  // 1) Try the content-script path first (your nice modal / prompt there)
+  // Only ask via content script; do NOT inject prompt into the page/iframes.
   const ok = await verifyViaContentScript(reason);
-  if (ok === true) return true;
-  if (ok === false) return false;
-
-  // 2) Fallback to injected page prompt (works even without content script)
-  return await verifyViaInjectedPrompt(reason, s.pinSalt, s.pinHash);
+  // ok can be true/false/null; we only proceed when explicitly true
+  return ok === true;
 }
 
 // Debug: prove background loaded
