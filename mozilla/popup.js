@@ -27,7 +27,15 @@ const wlCountEl = document.getElementById("wlCount");
 const wlClearBtn = document.getElementById("wlClearBtn");
 
 // ---------- State ----------
-let state = { names: [], mode: "hide", enabled: true, whitelist: [] };
+let state = {
+  names: [],
+  mode: "hide",
+  enabled: true,
+  whitelist: [],
+  pinEnabled: false,
+  pinHash: null,
+  pinSalt: null,
+};
 
 // ---------- Virtualization ----------
 const ITEM_HEIGHT = 28; // must match CSS .vlist-row height
@@ -61,6 +69,65 @@ async function migrateIfNeeded() {
   }
 }
 
+// --- PIN helpers (popup) ---
+function hasPinLocal() {
+  return !!(state.pinHash && state.pinSalt);
+}
+async function sha256Hex(str) {
+  try {
+    const enc = new TextEncoder().encode(str);
+    const buf = await crypto.subtle.digest("SHA-256", enc);
+    return [...new Uint8Array(buf)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    let h1 = 0,
+      h2 = 0;
+    for (let i = 0; i < str.length; i++) {
+      h1 = (h1 * 31 + str.charCodeAt(i)) | 0;
+      h2 = (h2 * 131 + str.charCodeAt(i)) | 0;
+    }
+    return (
+      Math.abs(h1).toString(16).padStart(8, "0") +
+      Math.abs(h2).toString(16).padStart(8, "0") +
+      Math.abs(h1 ^ h2)
+        .toString(16)
+        .padStart(8, "0") +
+      Math.abs(h1 + h2)
+        .toString(16)
+        .padStart(8, "0")
+    );
+  }
+}
+async function verifyPinInput() {
+  if (!state.pinEnabled || !hasPinLocal()) return true; // not required
+  const guess = prompt("Enter PIN:");
+  if (guess == null) return false;
+  const h = await sha256Hex(`${state.pinSalt}:${guess}`);
+  const ok = h === state.pinHash;
+  if (!ok) setStatus("Wrong PIN", 1200);
+  return ok;
+}
+
+async function requirePinFromActiveTab(reason = "change settings") {
+  // Ask the active tab’s content script to prompt for PIN.
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
+      if (!tab?.id) return resolve(false);
+      try {
+        chrome.tabs.sendMessage(
+          tab.id,
+          { type: "cf_require_pin", reason },
+          (resp) => resolve(!!resp?.ok)
+        );
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
 function normalize(saved) {
   return {
     names: Array.isArray(saved.names) ? saved.names.slice(0, 200) : [],
@@ -69,6 +136,10 @@ function normalize(saved) {
     whitelist: Array.isArray(saved.whitelist)
       ? saved.whitelist.slice(0, 200)
       : [],
+    // NEW:
+    pinEnabled: !!saved.pinEnabled,
+    pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
+    pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
   };
 }
 
@@ -275,12 +346,15 @@ async function removeTermByIndex(idx) {
     setStatus("Bad index", 900);
     return;
   }
+  if (!(await verifyPinInput())) return;
+
   state.names.splice(idx, 1);
   updateTermCount();
   await save();
   vlistSetData(state.names);
   setStatus("Removed", 700);
 }
+
 vlistInner.addEventListener(
   "pointerdown",
   (e) => {
@@ -328,6 +402,17 @@ wlInner.addEventListener(
 // ---------- Clear all ----------
 bulkClearBtn.addEventListener("click", async () => {
   if (!state.names.length) return;
+
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await requirePinFromActiveTab("clear all blocked terms");
+    if (!ok) {
+      setStatus("PIN required", 1200);
+      return;
+    }
+  }
+
   if (!confirm("Remove all terms?")) return;
   state.names = [];
   updateTermCount();
@@ -335,6 +420,7 @@ bulkClearBtn.addEventListener("click", async () => {
   vlistSetData(state.names);
   setStatus("Cleared", 900);
 });
+
 wlClearBtn.addEventListener("click", async () => {
   if (!state.whitelist.length) return;
   if (!confirm("Remove all sites from whitelist?")) return;
@@ -455,7 +541,6 @@ modeEl.addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", async (e) => {
-  // Alt+Shift+F and not inside a text field
   const t = e.target;
   const tag = (t && t.tagName) || "";
   const isTyping =
@@ -464,13 +549,26 @@ document.addEventListener("keydown", async (e) => {
 
   if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    cfEnabled.checked = !cfEnabled.checked;
-    state.enabled = cfEnabled.checked;
+
+    const nextEnabled = !cfEnabled.checked;
+
+    const all = await getSync([STORAGE_KEY]);
+    const s = all[STORAGE_KEY] || {};
+    if (s.pinEnabled && s.pinHash && s.pinSalt) {
+      const ok = await requirePinFromActiveTab(
+        nextEnabled ? "turn filtering ON" : "turn filtering OFF"
+      );
+      if (!ok) {
+        setStatus("PIN required", 1200);
+        return;
+      }
+    }
+
+    cfEnabled.checked = nextEnabled;
+    state.enabled = nextEnabled;
     await save();
     setStatus(
-      cfEnabled.checked
-        ? "Filtering ON (shortcut)"
-        : "Filtering OFF (shortcut)",
+      nextEnabled ? "Filtering ON (shortcut)" : "Filtering OFF (shortcut)",
       1200
     );
   }
@@ -482,7 +580,24 @@ openOptionsPageBtn?.addEventListener("click", () => {
 });
 
 cfEnabled.addEventListener("change", async () => {
-  state.enabled = cfEnabled.checked;
+  const wantsEnabled = cfEnabled.checked;
+
+  // Check if a PIN is required
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await requirePinFromActiveTab(
+      wantsEnabled ? "turn filtering ON" : "turn filtering OFF"
+    );
+    if (!ok) {
+      // revert UI, bail
+      cfEnabled.checked = !wantsEnabled;
+      setStatus("PIN required", 1200);
+      return;
+    }
+  }
+
+  state.enabled = wantsEnabled;
   await save();
 });
 

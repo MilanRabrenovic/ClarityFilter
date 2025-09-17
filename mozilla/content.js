@@ -215,6 +215,87 @@ const WRAPPER_TOKENS = new Set([
   "rail",
 ]);
 
+// --- PIN helpers ---
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(str)
+  );
+  return [...new Uint8Array(buf)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function getSettings() {
+  const all = await chrome.storage.sync.get(STORAGE_KEY);
+  const s = all[STORAGE_KEY] || {};
+  return {
+    ...s,
+    pinEnabled: !!s.pinEnabled,
+    pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
+    pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+  };
+}
+
+async function requirePin(reason = "change settings") {
+  const s = await getSettings();
+  if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
+
+  const input = prompt(`Enter PIN to ${reason}:`);
+  if (input == null) return false; // cancelled
+  try {
+    const hash = await sha256Hex(`${s.pinSalt}|${input}`);
+    return hash === s.pinHash;
+  } catch {
+    return false;
+  }
+}
+
+document.addEventListener("keydown", async (e) => {
+  // ignore typing contexts
+  const t = e.target;
+  const tag = (t && t.tagName) || "";
+  const typing = tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable;
+  if (typing) return;
+
+  // Alt+Shift+F (no Ctrl/Cmd)
+  if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+
+    if (
+      !(await requirePin(
+        settings.enabled ? "turn filtering OFF" : "turn filtering ON"
+      ))
+    ) {
+      // wrong/cancelled PIN -> do nothing
+      return;
+    }
+
+    // flip enabled in storage (content script should NOT directly mutate local `settings`
+    // without writing to storage; storage.onChanged will re-sync and rescan)
+    try {
+      const all = await chrome.storage.sync.get(STORAGE_KEY);
+      const prev = all[STORAGE_KEY] || {};
+      await chrome.storage.sync.set({
+        [STORAGE_KEY]: { ...prev, enabled: !prev.enabled },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+// Let popup/options ask us to verify a PIN when needed.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "cf_require_pin") {
+    (async () => {
+      const ok = await requirePin(msg.reason || "change settings");
+      sendResponse({ ok });
+    })();
+    return true; // keep port open
+  }
+});
+
 function tokenHit(tokens, set) {
   for (const t of tokens) if (set.has(t)) return true;
   return false;

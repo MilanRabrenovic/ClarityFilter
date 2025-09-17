@@ -11,40 +11,73 @@
     </header>
 
     <main>
-      <section class="card">
-        <h2>Behavior</h2>
+      <div class="container">
+        <section class="card">
+          <h2>Behavior</h2>
 
-        <div class="row">
-          <label>Action on match:</label>
-          <label><input type="radio" name="mode" value="hide" /> Hide</label>
-          <label><input type="radio" name="mode" value="blur" /> Blur</label>
-          <label
-            ><input type="radio" name="mode" value="pixelate" /> Pixelate</label
-          >
-        </div>
+          <div class="row">
+            <label>Action on match:</label>
+            <label><input type="radio" name="mode" value="hide" /> Hide</label>
+            <label><input type="radio" name="mode" value="blur" /> Blur</label>
+            <label
+              ><input type="radio" name="mode" value="pixelate" />
+              Pixelate</label
+            >
+          </div>
 
-        <div class="row" id="pixelRow">
-          <label for="pixelCell"
-            >Pixel size: <span id="pixelCellVal"></span
-          ></label>
-          <input id="pixelCell" type="range" min="6" max="24" step="1" />
-          <div class="hint">Bigger = chunkier mosaic.</div>
-        </div>
+          <div class="row" id="pixelRow">
+            <label for="pixelCell"
+              >Pixel size: <span id="pixelCellVal"></span
+            ></label>
+            <input id="pixelCell" type="range" min="6" max="24" step="1" />
+            <div class="hint">Bigger = chunkier mosaic.</div>
+          </div>
 
-        <div class="row">
-          <label class="switch">
-            <input id="enabled" type="checkbox" />
-            <span>Enable filtering</span>
-          </label>
-        </div>
-      </section>
+          <div class="row">
+            <label class="switch">
+              <input id="enabled" type="checkbox" />
+              <span>Enable filtering</span>
+            </label>
+          </div>
 
-      <div id="status" class="status" aria-live="polite"></div>
+          <div class="row">
+            <section>
+              <fieldset id="pinBox">
+                <legend>PIN Protection</legend>
+
+                <label
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    margin: 6px 0;
+                  "
+                >
+                  <input type="checkbox" id="pinEnabled" />
+                  Require PIN to remove terms or turn filtering off
+                </label>
+
+                <div class="row" style="display: flex; gap: 8px; margin: 8px 0">
+                  <button id="setPinBtn" type="button">Set PIN</button>
+                </div>
+
+                <p
+                  id="pinHint"
+                  class="small muted"
+                  style="margin: 6px 0 0 0"
+                ></p>
+              </fieldset>
+            </section>
+          </div>
+        </section>
+        <div id="status" class="status" aria-live="polite"></div>
+      </div>
     </main>
 
     <footer class="bar">
-      <button id="save" class="primary">Save</button>
-      <button id="openPopup" title="Open popup">Open Popup</button>
+      <div class="container">
+        <button id="save" class="primary">Save</button>
+      </div>
     </footer>
 
     <script src="options.js"></script>
