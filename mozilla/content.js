@@ -3,7 +3,13 @@
 
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
-let settings = { names: [], mode: "hide", enabled: true, whitelist: [] };
+let settings = {
+  names: [],
+  mode: "hide",
+  enabled: true,
+  whitelist: [],
+  pixelCell: 15,
+};
 let nameRegex = null;
 let observer = null;
 
@@ -29,7 +35,6 @@ function ensureStyle() {
     }
     /* Pixelate look via two perpendicular repeating gradients (mosaic) */
     .cf-overlay.pixelate {
-      --cf-cell: 15px;                /* size of each “pixel” square */
       --cf-a: rgba(0,0,0,.92);
       --cf-b: #fff;
 
@@ -59,6 +64,10 @@ function ensureStyle() {
   document.documentElement.appendChild(style);
 }
 
+function escCloser(e) {
+  if (e.key === "Escape") closeOptionsModal();
+}
+
 // -------------------- Utils --------------------
 function debounce(fn, wait = 150) {
   let t;
@@ -76,6 +85,10 @@ function addOverlay(container, cls) {
   container.classList.add("cf-obscured");
   const ov = document.createElement("div");
   ov.className = `cf-overlay ${cls}`;
+  if (cls.includes("pixelate")) {
+    const cell = Number.isFinite(settings.pixelCell) ? settings.pixelCell : 15;
+    ov.style.setProperty("--cf-cell", `${cell}px`);
+  }
   container.appendChild(ov);
 }
 
@@ -635,6 +648,7 @@ function scan() {
   }
 
   ensureStyle();
+
   lastScanBlockedCount = 0;
 
   // Pass 1: likely item containers -> anchor via text node
@@ -718,6 +732,7 @@ function loadSettingsAndInit() {
         mode: saved.mode || "hide",
         enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
         whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
+        pixelCell: Number.isFinite(saved.pixelCell) ? saved.pixelCell : 15,
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -740,6 +755,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     mode: newVal.mode || "hide",
     enabled: typeof newVal.enabled === "boolean" ? newVal.enabled : true,
     whitelist: Array.isArray(newVal.whitelist) ? newVal.whitelist : [],
+    pixelCell: Number.isFinite(newVal.pixelCell) ? newVal.pixelCell : 15,
   };
   nameRegex = buildRegex(settings.names);
 

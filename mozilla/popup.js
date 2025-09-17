@@ -476,6 +476,11 @@ document.addEventListener("keydown", async (e) => {
   }
 });
 
+const openOptionsPageBtn = document.getElementById("openOptionsPage");
+openOptionsPageBtn?.addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
+});
+
 cfEnabled.addEventListener("change", async () => {
   state.enabled = cfEnabled.checked;
   await save();

@@ -222,3 +222,91 @@ button#save {
   font-size: 12px;
   opacity: 0.8;
 }
+
+/* tiny icon button */
+.icon-btn {
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: #f5f5f5;
+}
+
+/* modal shell */
+.cf-modal[hidden] {
+  display: none !important;
+}
+.cf-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+  font-size: 13px;
+}
+.cf-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+.cf-modal-card {
+  position: relative;
+  width: min(360px, 90vw);
+  max-height: 85vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  padding: 12px;
+}
+.cf-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cf-modal-close {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cf-modal-body {
+  display: grid;
+  gap: 10px;
+}
+.cf-modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.cf-modal-footer .primary {
+  background: #2563eb;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.stack {
+  display: grid;
+  gap: 6px;
+}
+
+.icon-btn {
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: #f5f5f5;
+}
