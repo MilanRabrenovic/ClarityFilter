@@ -12,17 +12,13 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 8px;
+        margin-bottom: 16px;
       "
     >
-      <h1 style="margin: 0; font-size: 16px">ClarityFilter</h1>
-      <button
-        id="openOptionsPage"
-        title="Open Options"
-        style="margin-left: 8px"
-      >
-        ⚙️ Options
+      <button class="btn-options" id="openOptionsPage" title="Open Options">
+        ⚙️
       </button>
+      <h1 style="margin: 0; font-size: 20px">ClarityFilter</h1>
 
       <label class="switch" title="Pause/Resume filtering">
         <input id="cfEnabled" type="checkbox" />
@@ -37,7 +33,7 @@
         <input
           id="nameInput"
           type="text"
-          placeholder="I'm sick of:"
+          placeholder="Filter out:"
           style="flex: 1; padding: 6px 8px"
           autocomplete="off"
         />

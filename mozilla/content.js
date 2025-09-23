@@ -68,6 +68,92 @@ function escCloser(e) {
   if (e.key === "Escape") closeOptionsModal();
 }
 
+// ---- PIN modal (content script only; no window.prompt) ----
+let CF_PIN_OPEN = false;
+
+function cfPinPrompt(reason = "change settings") {
+  if (CF_PIN_OPEN) return Promise.resolve(null);
+  CF_PIN_OPEN = true;
+
+  // Root + Shadow to isolate from site CSS
+  const host = document.createElement("div");
+  host.id = "cf-pin-host";
+  host.style.all = "initial";
+  host.style.position = "fixed";
+  host.style.inset = "0";
+  host.style.zIndex = "2147483647";
+  host.style.pointerEvents = "auto";
+  (document.documentElement || document.body).appendChild(host);
+
+  const shadow = host.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = `
+    :host { all: initial; }
+    .backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.35);
+    }
+    .dlg {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      min-width: 320px; max-width: 90vw;
+      font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+      background: #1f2330; color: #e9eef7; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.4);
+      padding: 16px 16px 12px;
+    }
+    .hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .hdr .title { font-weight: 600; }
+    .msg { opacity: .9; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; }
+    input[type="password"]{
+      flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #374151;
+      background: #0f1421; color: #e9eef7; outline: none;
+    }
+    input[type="password"]:focus{ border-color:#10b981; box-shadow: 0 0 0 2px rgba(79,70,229,.35); }
+    button{
+      padding: 9px 14px; border-radius: 8px; border: 0; cursor: pointer; font-weight: 600;
+    }
+    .ok { background: #10b981; color: white; }
+    .cancel { background: #374151; color: #e9eef7; }
+  `;
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `
+    <div class="backdrop" part="backdrop"></div>
+    <div class="dlg" role="dialog" aria-modal="true" aria-label="ClarityFilter PIN">
+      <div class="hdr">
+        <div class="title">ClarityFilter</div>
+      </div>
+      <div class="msg">Enter PIN to ${reason}:</div>
+      <div class="row">
+        <input id="cfPin" type="password" autocomplete="off" />
+        <button class="ok" id="ok">OK</button>
+        <button class="cancel" id="cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  shadow.append(style, wrap);
+
+  const input = shadow.getElementById("cfPin");
+  const ok = shadow.getElementById("ok");
+  const cancel = shadow.getElementById("cancel");
+
+  let resolve;
+  const p = new Promise((res) => (resolve = res));
+
+  function close(v = null) {
+    host.remove();
+    CF_PIN_OPEN = false;
+    resolve(v);
+  }
+  ok.addEventListener("click", () => close(input.value || ""));
+  cancel.addEventListener("click", () => close(null));
+  shadow.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") ok.click();
+    if (e.key === "Escape") cancel.click();
+  });
+
+  input.focus();
+  return p;
+}
+
 // -------------------- Utils --------------------
 function debounce(fn, wait = 150) {
   let t;
@@ -83,6 +169,11 @@ function addOverlay(container, cls) {
   if (container.querySelector(":scope > .cf-overlay")) return;
 
   container.classList.add("cf-obscured");
+  const cs = getComputedStyle(container);
+  if (cs && cs.display === "contents") {
+    // climb one level to a paintable box
+    if (container.parentElement) container = container.parentElement;
+  }
   const ov = document.createElement("div");
   ov.className = `cf-overlay ${cls}`;
   if (cls.includes("pixelate")) {
@@ -135,14 +226,27 @@ function buildRegex(names) {
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
+    // Proper escaping: [, ], and \ must be escaped inside the class
     .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+
   if (!cleaned.length) return null;
 
-  const core = `(?:${cleaned.join("|")})`; // <-- no suffix
+  // Join all terms. No suffix allowance here.
+  const core = cleaned.join("|");
+
+  // Whole-word boundaries against Unicode letters/numbers/underscore.
+  // Hyphen and other punctuation count as boundaries, so "AI-" matches.
+  const pattern = `(?<![\\p{L}\\p{N}_])(?:${core})(?![\\p{L}\\p{N}_])`;
+
   try {
-    return new RegExp(`(?<![\\p{L}\\p{N}_])${core}(?![\\p{L}\\p{N}_])`, "iu");
+    return new RegExp(pattern, "iu"); // Unicode + case-insensitive
   } catch {
-    return new RegExp(`(^|[^\\p{L}\\p{N}_])${core}($|[^\\p{L}\\p{N}_])`, "iu");
+    // Fallback for environments without lookbehind.
+    // This includes the boundary chars in the match, so replacement keeps them.
+    return new RegExp(
+      `(^|[^\\p{L}\\p{N}_])(?:${core})(?=[^\\p{L}\\p{N}_]|$)`,
+      "iu"
+    );
   }
 }
 
@@ -201,7 +305,6 @@ const WRAPPER_TOKENS = new Set([
   "feed",
   "stream",
   "section",
-  "group",
   "results",
   "blocks",
   "block",
@@ -242,8 +345,8 @@ async function requirePin(reason = "change settings") {
   const s = await getSettings();
   if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
 
-  const input = prompt(`Enter PIN to ${reason}:`);
-  if (input == null) return false; // cancelled
+  const input = await cfPinPrompt(reason);
+  if (input == null) return false;
   try {
     const hash = await sha256Hex(`${s.pinSalt}:${input}`);
     return hash === s.pinHash;
@@ -252,8 +355,11 @@ async function requirePin(reason = "change settings") {
   }
 }
 
+const IS_TOP = window === window.top;
+
 document.addEventListener("keydown", async (e) => {
-  // ignore typing contexts
+  if (!IS_TOP) return;
+  if (e.repeat) return;
   const t = e.target;
   const tag = (t && t.tagName) || "";
   const typing = tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable;
@@ -318,6 +424,18 @@ function looksHuge(el) {
   return (tooWide && tooTall) || r.height >= 1200;
 }
 function looksLikeWrapper(el) {
+  // Never treat a real article node as a generic wrapper.
+  if (el?.tagName === "ARTICLE" || el?.getAttribute?.("role") === "article") {
+    return false;
+  }
+  const dt = (el?.getAttribute?.("data-testid") || "").toLowerCase();
+  if (
+    /(grid|stack|cluster|wrapper|container|list|section|columns|row|rail|unit)/.test(
+      dt
+    )
+  ) {
+    return true;
+  }
   return tokenHit(classTokens(el), WRAPPER_TOKENS);
 }
 function looksLikeItem(el) {
@@ -331,12 +449,39 @@ function hasManyHeadlines(el) {
     ).length >= 3
   );
 }
-function hasManyCardDescendants(el) {
+// A descendant counts as a “card item” only if it’s article-ish AND has media + text.
+function isCardish(el) {
+  if (!el || el === document) return false;
+  const dt = (el.getAttribute?.("data-testid") || "").toLowerCase();
+  const articley =
+    el.tagName === "ARTICLE" ||
+    el.getAttribute?.("role") === "article" ||
+    dt.includes("card") ||
+    looksLikeItem(el);
   return (
-    el.querySelectorAll(
-      "article,[role='article'],.news,.post,.story,.result,.entry,.tile,.card,[class*='card' i]:not([class*='cards' i])"
-    ).length >= 2
+    articley &&
+    hasMedia(el) &&
+    hasCardText(el) &&
+    // Avoid counting the container itself
+    el !== this
   );
+}
+
+function hasManyCardDescendants(root) {
+  // Scan a reasonable number of descendants to keep perf predictable
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let count = 0,
+    n = 0;
+  while (walker.nextNode()) {
+    const el = walker.currentNode;
+    n++;
+    if (n > 2000) break; // bail on gigantic DOMs
+    if (isCardish.call(root, el)) {
+      count++;
+      if (count >= 2) return true;
+    }
+  }
+  return false;
 }
 function isForbiddenContainer(el) {
   if (!el) return true;
@@ -364,6 +509,39 @@ function hasCardText(el) {
     "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i],[class*='description' i],[data-testid*='text' i],p"
   );
 }
+// Find the smallest ancestor (within a few levels) that contains both media + text,
+// and that doesn't look like a giant multi-card wrapper.
+function findCardAncestor(el, maxHops = 6) {
+  let cur = el;
+  for (let i = 0; cur && i < maxHops; i++, cur = cur.parentElement) {
+    if (!cur) break;
+    // Skip "display: contents" containers – absolutely positioned overlay won’t render there
+    const cs = getComputedStyle(cur);
+    if (cs && cs.display === "contents") continue;
+    if (
+      hasMedia(cur) &&
+      hasCardText(cur) &&
+      !hasManyCardDescendants(cur) &&
+      !looksLikeWrapper(cur) &&
+      !isForbiddenContainer(cur)
+    ) {
+      return cur;
+    }
+  }
+  return null;
+}
+
+const cardish = document.querySelectorAll(`
+  article:has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+  [data-testid*="card" i]:not([data-testid*="grid" i]):not([data-testid*="stack" i]):has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+  li:has(img, picture, video):has(h1,h2,h3,p)
+`);
+cardish.forEach((c) => {
+  if (!shouldTarget(c) || hasManyCardDescendants(c)) return;
+  const tn = findFirstMatchingTextNode(c);
+  if (tn) applyAction(c);
+});
+
 function hasLinkImgTime(el) {
   const a = el.querySelector("a[href]");
   const img = el.querySelector("img, picture, [style*='background-image' i]");
@@ -541,6 +719,20 @@ function promoteAcrossSiblings(el) {
     !isForbiddenContainer(parent)
   )
     return parent;
+  // NEW: if sibling cluster (image + title) lives under grandparent, try one hop up
+  const gp = parent.parentElement;
+  if (gp) {
+    const gpLooksMulti =
+      hasManyCardDescendants(gp) || looksLikeWrapper(gp) || looksHuge(gp);
+    if (
+      hasMedia(gp) &&
+      hasCardText(gp) &&
+      !gpLooksMulti &&
+      !isForbiddenContainer(gp)
+    ) {
+      return gp;
+    }
+  }
   return el;
 }
 function promoteToCardBoundary(el) {
@@ -568,6 +760,25 @@ function pickContainer(el) {
     .post,.news-item,.story,.card,.teaser,.result,.entry,.tile,.search-result,.list-item,
     [class*="card" i]:not([class*="cards" i]):not([class*="wrapper" i]):not([class*="wrap" i]):not([class*="list" i]):not([class*="grid" i]):not([class*="container" i]):not([class*="content" i]):not([class*="row" i]):not([class*="results" i]):not([class*="blocks" i]):not([class*="block" i]):not([class*="section" i])
   `);
+
+  // NEW: if the closest <article> contains both media and text (single-card),
+  // prefer that. This matches your screenshot structure exactly.
+  const nearestArticle = el.closest("article,[role='article']");
+  if (
+    nearestArticle &&
+    hasMedia(nearestArticle) &&
+    hasCardText(nearestArticle) &&
+    !hasManyCardDescendants(nearestArticle) &&
+    !isForbiddenContainer(nearestArticle)
+  ) {
+    return nearestArticle;
+  }
+
+  // NEW: Try the smallest ancestor that contains BOTH image/media and card text.
+  const bothAncestor = findCardAncestor(el, 6);
+  if (bothAncestor) {
+    return bothAncestor;
+  }
 
   const cands = collectCandidates(el);
   let best = null,
@@ -642,11 +853,42 @@ function clearEffects() {
   removeOverlays(document); // NEW
 }
 
+function clampToReasonable(container, anchorEl) {
+  if (!container) return container;
+  const r = container.getBoundingClientRect?.();
+  if (!r) return container;
+  const vw = Math.max(
+    320,
+    window.innerWidth || document.documentElement.clientWidth || 0
+  );
+  const vh = Math.max(
+    320,
+    window.innerHeight || document.documentElement.clientHeight || 0
+  );
+
+  const tooWide = r.width >= vw * 0.85;
+  const tooTall = r.height >= vh * 0.7;
+  const tooHeady = hasManyHeadlines(container);
+  const isCluster = hasManyCardDescendants(container);
+  const tooBig = (tooWide && tooTall) || tooHeady || isCluster;
+  if (!tooBig) return container;
+
+  // Prefer the smallest nearby card-ish thing that still covers the match.
+  const small =
+    anchorEl?.closest?.(
+      'article,[role="article"],li,.card,.story,.tile,[data-testid*="card" i]'
+    ) ||
+    anchorEl?.parentElement ||
+    container;
+  return small;
+}
+
 // -------------------- Actions --------------------
 function applyAction(el) {
   if (!shouldTarget(el)) return;
 
-  const container = pickContainer(el) || el;
+  let container = pickContainer(el) || el;
+  container = clampToReasonable(container, el);
 
   if (container.querySelector(":scope > .cf-overlay")) return;
 
@@ -732,6 +974,25 @@ function scan() {
   ensureStyle();
 
   lastScanBlockedCount = 0;
+
+  // Pass 0 (fast path for modern browsers): pick card-like nodes that have media + text.
+  // Do this *after* nameRegex exists.
+  try {
+    if (CSS.supports("selector(:has(*))")) {
+      const cardish = document.querySelectorAll(`
+        article:has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+        [class*="card" i]:not([class*="cards" i]):has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+        li:has(img, picture, video):has(h1,h2,h3,p)
+      `);
+      cardish.forEach((c) => {
+        if (!shouldTarget(c) || hasManyCardDescendants(c)) return;
+        const tn = findFirstMatchingTextNode(c);
+        if (tn) applyAction(c);
+      });
+    }
+  } catch {
+    /* old engines without selector support */
+  }
 
   // Pass 1: likely item containers -> anchor via text node
   const containers = document.querySelectorAll(`

@@ -1,14 +1,18 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "ClarityFilter",
-  "short_name": "ClarityFilter",
-  "version": "0.3.10",
+  "version": "0.3.9",
   "description": "Hide or blur articles that mention names you choose.",
   "permissions": [
-    "storage"
+    "storage",
+    "tabs",
+    "<all_urls>"
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
   },
   "commands": {
     "toggle-filter": {
@@ -18,7 +22,7 @@
       "description": "Toggle ClarityFilter on/off"
     }
   },
-  "action": {
+  "browser_action": {
     "default_popup": "popup.html",
     "default_title": "ClarityFilter",
     "default_icon": {
@@ -48,5 +52,16 @@
       "run_at": "document_idle",
       "all_frames": true
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "clarityfilter@solid.develop",
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  }
 }
