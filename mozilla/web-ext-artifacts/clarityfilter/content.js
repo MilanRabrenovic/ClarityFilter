@@ -7,8 +7,6 @@ let settings = { names: [], mode: "hide", enabled: true, whitelist: [] };
 let nameRegex = null;
 let observer = null;
 
-const DEBUG_ALERT = false;
-
 // -------------------- Style --------------------
 const STYLE_ID = "cf-style";
 function ensureStyle() {
@@ -508,16 +506,9 @@ function applyAction(el) {
 
   const container = pickContainer(el) || el;
 
-  if (!DEBUG_ALERT && container && container.style) {
+  if (container && container.style) {
     const old = container.style.outline;
     setTimeout(() => (container.style.outline = old || ""), 600);
-  }
-  if (DEBUG_ALERT) {
-    const sample = (container.innerText || container.textContent || "").slice(
-      0,
-      200
-    );
-    alert("Matched in:\n\n" + sample);
   }
   if (isForbiddenContainer(container)) return;
 
