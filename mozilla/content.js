@@ -341,15 +341,6 @@ const WRAPPER_TOKENS = new Set([
 ]);
 
 // --- PIN helpers ---
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(str)
-  );
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 async function pbkdf2Hex(pin, saltHex, iter = 150000) {
   const enc = new TextEncoder();
@@ -394,16 +385,9 @@ async function requirePin(reason = "change settings") {
   if (input == null) return false;
 
   try {
-    // Use the same verification logic as other places
-    if (s.pinAlgo === "PBKDF2") {
-      // New PBKDF2 format
-      const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
-      return hash === s.pinHash;
-    } else {
-      // Legacy SHA-256 format
-      const hash = await sha256Hex(`${s.pinSalt}:${input}`);
-      return hash === s.pinHash;
-    }
+    // Use PBKDF2 for secure PIN verification
+    const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
+    return hash === s.pinHash;
   } catch {
     return false;
   }

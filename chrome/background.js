@@ -54,17 +54,13 @@ function sendMessageWithTimeout(tabId, msg, ms = 20000, frameId = null) {
 }
 
 async function promptPin(reason) {
-
-
   const id = await activeTabId();
   if (!id) {
-
     return false;
   }
 
   // Get the main frame ID to target only the main frame
   const mainFrameId = await getMainFrameId(id);
-
 
   try {
     // First, try to ping the content script in the main frame
@@ -76,18 +72,16 @@ async function promptPin(reason) {
     );
 
     if (pingResp?.ok) {
-      
+      // Content script is loaded in main frame, request PIN
       const resp = await sendMessageWithTimeout(
         id,
         { type: "cf_require_pin", reason },
         30000,
         mainFrameId
       );
-
       return resp?.ok === true;
     } else {
       // Content script not loaded, inject it
-
       await chrome.scripting.executeScript({
         target: { tabId: id, frameIds: [mainFrameId] },
         files: ["content.js"],
@@ -96,17 +90,16 @@ async function promptPin(reason) {
       // Wait for content script to initialize
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
+      // Now try PIN prompt in main frame
       const resp = await sendMessageWithTimeout(
         id,
         { type: "cf_require_pin", reason },
         30000,
         mainFrameId
       );
-
       return resp?.ok === true;
     }
   } catch (error) {
-
     return false;
   }
 }
@@ -119,31 +112,22 @@ async function ensurePinAuthorized(reason, s) {
 // Global state
 let isProcessingCommand = false;
 
-// Service worker startup
-
-
 // Command handler
 chrome.commands.onCommand.addListener(async (command) => {
-
-
   if (command !== "toggle-filter") {
-   
     return;
   }
 
   if (isProcessingCommand) {
-   
     return;
   }
 
   isProcessingCommand = true;
-  
 
   try {
     // Read current settings
     const all0 = await chrome.storage.sync.get(STORAGE_KEY);
     const current0 = normalize(all0[STORAGE_KEY] || {});
-   
 
     // Check PIN authorization
     const reason = current0.enabled
@@ -151,10 +135,8 @@ chrome.commands.onCommand.addListener(async (command) => {
       : "turn filtering ON";
     const allowed = await ensurePinAuthorized(reason, current0);
     if (!allowed) {
-      
       return;
     }
-  
 
     // Re-read settings after PIN check
     const all1 = await chrome.storage.sync.get(STORAGE_KEY);
@@ -163,32 +145,25 @@ chrome.commands.onCommand.addListener(async (command) => {
     // Toggle the setting
     const next = { ...current1, enabled: !current1.enabled };
     await chrome.storage.sync.set({ [STORAGE_KEY]: next });
-   
 
     // Notify content script
     const id = await activeTabId();
     if (id) {
       try {
         await chrome.tabs.sendMessage(id, { type: "cf_rescan" });
-      
       } catch (error) {
-       
+        // Ignore if no content script on that page yet
       }
-    } else {
-      
     }
   } catch (error) {
-  
+    // Handle error silently
   } finally {
     isProcessingCommand = false;
-  
   }
 });
 
 // Initialize default settings
 chrome.runtime.onInstalled.addListener(async () => {
-
-
   const all = await chrome.storage.sync.get(STORAGE_KEY);
   if (!all[STORAGE_KEY]) {
     await chrome.storage.sync.set({
@@ -203,8 +178,5 @@ chrome.runtime.onInstalled.addListener(async () => {
         pinSalt: null,
       },
     });
- 
   }
 });
-
-

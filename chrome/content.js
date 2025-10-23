@@ -3,7 +3,6 @@
 
 // Prevent multiple content script executions
 if (window.CF_CONTENT_SCRIPT_LOADED) {
-
   // Exit early to prevent duplicate execution
   throw new Error("Content script already loaded");
 }
@@ -41,8 +40,6 @@ let settings = {
 };
 let nameRegex = null;
 let observer = null;
-
-const DEBUG_ALERT = false;
 
 // -------------------- Style --------------------
 const STYLE_ID = "cf-style";
@@ -365,15 +362,6 @@ const WRAPPER_TOKENS = new Set([
 ]);
 
 // --- PIN helpers ---
-async function sha256Hex(str) {
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(str)
-  );
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 async function pbkdf2Hex(pin, saltHex, iter = 150000) {
   const enc = new TextEncoder();
@@ -418,16 +406,9 @@ async function requirePin(reason = "change settings") {
   if (input == null) return false;
 
   try {
-    // Use the same verification logic as other places
-    if (s.pinAlgo === "PBKDF2") {
-      // New PBKDF2 format
-      const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
-      return hash === s.pinHash;
-    } else {
-      // Legacy SHA-256 format
-      const hash = await sha256Hex(`${s.pinSalt}:${input}`);
-      return hash === s.pinHash;
-    }
+    // Use PBKDF2 for secure PIN verification
+    const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
+    return hash === s.pinHash;
   } catch {
     return false;
   }
@@ -451,8 +432,6 @@ document.addEventListener("keydown", async (e) => {
 
 // Consolidated message listener for all content script messages
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-
-
   // Handle ping to check if content script is loaded
   if (msg?.type === "cf_ping") {
     sendResponse({ ok: true });
@@ -462,14 +441,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "cf_require_pin") {
     // Only handle PIN prompts in the main frame (top-level window)
     if (window !== window.top) {
-  
       sendResponse({ ok: false });
       return true;
     }
 
     // Prevent multiple PIN prompts from being handled simultaneously
     if (window.CF_PIN_PROMPT_ACTIVE) {
-   
       sendResponse({ ok: false });
       return true;
     }
@@ -477,9 +454,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     window.CF_PIN_PROMPT_ACTIVE = true;
     (async () => {
       try {
-      
         const ok = await requirePin(msg.reason || "change settings");
-     
+
         sendResponse({ ok });
       } finally {
         window.CF_PIN_PROMPT_ACTIVE = false;
@@ -541,21 +517,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   // Handle rescan messages
   if (msg?.type === "cf_rescan") {
-
     (async () => {
       // Prefer authoritative settings from background if present
       if (msg.next && typeof msg.next === "object") {
-      
         settings = normalize(msg.next);
       } else {
-       
         // Fallback: re-read from storage to avoid stale settings
         const all = await chrome.storage.sync.get(STORAGE_KEY);
         const s = all[STORAGE_KEY] || {};
         settings = normalize(s);
       }
-
-  
 
       // Recompute regex and apply/clear deterministically
       nameRegex = buildRegex(settings.names);
@@ -573,11 +544,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (settings.enabled) {
         applyEffects();
         const count = scan();
-   
+
         sendResponse({ ok: true, enabled: true, count });
       } else {
         clearEffects();
-    
+
         sendResponse({ ok: true, enabled: false });
       }
     })();
