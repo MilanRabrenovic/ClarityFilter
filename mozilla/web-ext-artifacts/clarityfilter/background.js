@@ -13,12 +13,10 @@ function normalize(s = {}) {
   };
 }
 
-// Debug: prove background loaded
-console.log("[ClarityFilter] background loaded");
 
 // Debug: show when commands are recognized
 api.commands.onCommand.addListener(async (command) => {
-  console.log("[ClarityFilter] command fired:", command);
+
   if (command !== "toggle-filter") return;
 
   const all = await api.storage.sync.get(STORAGE_KEY);
@@ -26,7 +24,7 @@ api.commands.onCommand.addListener(async (command) => {
   const next = { ...current, enabled: !current.enabled };
 
   await api.storage.sync.set({ [STORAGE_KEY]: next });
-  console.log("[ClarityFilter] toggled enabled ->", next.enabled);
+
 
   // Ping active tab so content script rescans
   try {
@@ -45,6 +43,6 @@ api.runtime.onInstalled.addListener(async () => {
     await api.storage.sync.set({
       [STORAGE_KEY]: { names: [], mode: "hide", enabled: true, whitelist: [] },
     });
-    console.log("[ClarityFilter] initialized default settings");
+ 
   }
 });

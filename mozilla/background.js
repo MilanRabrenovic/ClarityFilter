@@ -83,7 +83,7 @@ async function promptPin(reason) {
       );
       if (resp?.ok === true) return true;
     } catch (error) {
-      console.log("[ClarityFilter] Could not inject content script:", error);
+
     }
   }
 
@@ -111,14 +111,13 @@ async function ensurePinAuthorized(reason, s) {
   return promptPin(reason);
 }
 
-// Debug: prove background loaded
-console.log("[ClarityFilter] background loaded");
 
-// Debug: show when commands are recognized
+
+
 let toggling = false;
 
 api.commands.onCommand.addListener(async (command) => {
-  console.log("[ClarityFilter] command fired:", command);
+
   if (command !== "toggle-filter" || toggling) return;
   toggling = true;
 
@@ -133,9 +132,7 @@ api.commands.onCommand.addListener(async (command) => {
       : "turn filtering ON";
     const allowed = await ensurePinAuthorized(reason, current0);
     if (!allowed) {
-      console.log(
-        "[ClarityFilter] toggle cancelled: PIN required or verification failed"
-      );
+    
       return;
     }
 
@@ -146,7 +143,7 @@ api.commands.onCommand.addListener(async (command) => {
     // Atomic toggle
     const next = { ...current1, enabled: !current1.enabled };
     await api.storage.sync.set({ [STORAGE_KEY]: next });
-    console.log("[ClarityFilter] toggled enabled ->", next.enabled);
+
 
     // Ping active tab so content script rescans
     try {
@@ -176,6 +173,6 @@ api.runtime.onInstalled.addListener(async () => {
         pinSalt: null,
       },
     });
-    console.log("[ClarityFilter] initialized default settings");
+
   }
 });
