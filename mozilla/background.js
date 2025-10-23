@@ -14,6 +14,8 @@ function normalize(s = {}) {
     pinEnabled: !!s.pinEnabled,
     pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+    pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
+    pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
   };
 }
 
@@ -61,33 +63,48 @@ async function ensurePinAuthorized(reason, s) {
 console.log("[ClarityFilter] background loaded");
 
 // Debug: show when commands are recognized
+let toggling = false;
+
 api.commands.onCommand.addListener(async (command) => {
   console.log("[ClarityFilter] command fired:", command);
-  if (command !== "toggle-filter") return;
+  if (command !== "toggle-filter" || toggling) return;
+  toggling = true;
 
-  const all = await api.storage.sync.get(STORAGE_KEY);
-  const current = normalize(all[STORAGE_KEY]);
-
-  // Gate with PIN if set
-  const reason = current.enabled ? "turn filtering OFF" : "turn filtering ON";
-  const allowed = await ensurePinAuthorized(reason, current);
-  if (!allowed) {
-    console.log(
-      "[ClarityFilter] toggle cancelled: PIN required or verification failed"
-    );
-    return;
-  }
-
-  const next = { ...current, enabled: !current.enabled };
-  await api.storage.sync.set({ [STORAGE_KEY]: next });
-  console.log("[ClarityFilter] toggled enabled ->", next.enabled);
-
-  // Ping active tab so content script rescans
   try {
-    const id = await activeTabId();
-    if (id) await api.tabs.sendMessage(id, { type: "cf_rescan" });
-  } catch {
-    // ignore if no content script on that page yet
+    // Read current settings
+    const all0 = await api.storage.sync.get(STORAGE_KEY);
+    const current0 = normalize(all0[STORAGE_KEY]);
+
+    // Gate with PIN if set
+    const reason = current0.enabled
+      ? "turn filtering OFF"
+      : "turn filtering ON";
+    const allowed = await ensurePinAuthorized(reason, current0);
+    if (!allowed) {
+      console.log(
+        "[ClarityFilter] toggle cancelled: PIN required or verification failed"
+      );
+      return;
+    }
+
+    // Re-read settings after PIN check to prevent race conditions
+    const all1 = await api.storage.sync.get(STORAGE_KEY);
+    const current1 = normalize(all1[STORAGE_KEY]);
+
+    // Atomic toggle
+    const next = { ...current1, enabled: !current1.enabled };
+    await api.storage.sync.set({ [STORAGE_KEY]: next });
+    console.log("[ClarityFilter] toggled enabled ->", next.enabled);
+
+    // Ping active tab so content script rescans
+    try {
+      const id = await activeTabId();
+      if (id) await api.tabs.sendMessage(id, { type: "cf_rescan" });
+    } catch {
+      // ignore if no content script on that page yet
+    }
+  } finally {
+    toggling = false;
   }
 });
 

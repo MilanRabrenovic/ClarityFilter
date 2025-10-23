@@ -14,6 +14,8 @@ function normalize(s = {}) {
     pinEnabled: !!s.pinEnabled,
     pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+    pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
+    pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
   };
 }
 
@@ -62,33 +64,50 @@ async function ensurePinAuthorized(reason, s) {
   return ok === true;
 }
 
-let toggleLock = false;
+let toggling = false;
 
 // Debug: prove background loaded
 console.log("[ClarityFilter] background loaded");
 
 api.commands.onCommand.addListener(async (command) => {
-  if (command !== "toggle-filter" || toggleLock) return;
-  toggleLock = true;
+  if (command !== "toggle-filter" || toggling) return;
+  toggling = true;
 
   try {
-    const tabId = await activeTabId();
-    if (!tabId) return;
+    // Read current settings
+    const all0 = await api.storage.sync.get(STORAGE_KEY);
+    const cur0 = normalize(all0[STORAGE_KEY] || {});
 
-    // Delegate the entire toggle operation to the content script
-    // This avoids service worker lifecycle issues with async PIN verification
-    try {
-      const response = await api.tabs.sendMessage(tabId, {
-        type: "cf_toggle_filter",
-      });
-      if (!response?.success) {
-        console.log("[ClarityFilter] Toggle failed or cancelled");
+    // Check PIN authorization
+    if (
+      !(await ensurePinAuthorized(
+        cur0.enabled ? "turn filtering OFF" : "turn filtering ON",
+        cur0
+      ))
+    ) {
+      return;
+    }
+
+    // Re-read settings after PIN check to prevent race conditions
+    const all1 = await api.storage.sync.get(STORAGE_KEY);
+    const cur1 = normalize(all1[STORAGE_KEY] || {});
+
+    // Atomic toggle
+    await api.storage.sync.set({
+      [STORAGE_KEY]: { ...cur1, enabled: !cur1.enabled },
+    });
+
+    // Notify content script to rescan
+    const tabId = await activeTabId();
+    if (tabId) {
+      try {
+        await api.tabs.sendMessage(tabId, { type: "cf_rescan" });
+      } catch {
+        // Content script not available, that's okay
       }
-    } catch {
-      console.log("[ClarityFilter] No content script available for toggle");
     }
   } finally {
-    toggleLock = false;
+    toggling = false;
   }
 });
 

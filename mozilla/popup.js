@@ -106,12 +106,45 @@ async function sha256Hex(str) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+async function pbkdf2Hex(pin, saltHex, iter = 150000) {
+  requireCrypto();
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const salt = Uint8Array.from(
+    saltHex.match(/../g).map((h) => parseInt(h, 16))
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", iterations: iter, salt },
+    key,
+    256
+  );
+  return [...new Uint8Array(bits)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 async function verifyPinInput() {
   if (!state.pinEnabled || !hasPinLocal()) return true; // not required
   const guess = prompt("Enter PIN:");
   if (guess == null) return false;
-  const h = await sha256Hex(`${state.pinSalt}:${guess}`);
-  const ok = h === state.pinHash;
+
+  // Support both old SHA-256 format and new PBKDF2 format
+  let hash;
+  if (state.pinAlgo === "PBKDF2") {
+    // New PBKDF2 format
+    hash = await pbkdf2Hex(guess, state.pinSalt, state.pinIter || 150000);
+  } else {
+    // Legacy SHA-256 format (for backward compatibility)
+    hash = await sha256Hex(`${state.pinSalt}:${guess}`);
+  }
+
+  const ok = hash === state.pinHash;
   if (!ok) setStatus("Wrong PIN", 1200);
   return ok;
 }
@@ -147,6 +180,8 @@ function normalize(saved) {
     pinEnabled: !!saved.pinEnabled,
     pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
     pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
+    pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
+    pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
   };
 }
 
@@ -534,6 +569,7 @@ modeEl.addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", async (e) => {
+  if (!e.isTrusted) return; // Block synthetic events from malicious pages
   const t = e.target;
   const tag = (t && t.tagName) || "";
   const isTyping =

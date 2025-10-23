@@ -378,6 +378,7 @@ let lastToggleTime = 0;
 const TOGGLE_COOLDOWN = 2000; // 2 seconds between toggles
 
 document.addEventListener("keydown", async (e) => {
+  if (!e.isTrusted) return; // Block synthetic events from malicious pages
   if (!IS_TOP) return;
   if (e.repeat) return;
   const t = e.target;

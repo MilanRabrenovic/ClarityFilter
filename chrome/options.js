@@ -51,6 +51,8 @@ function normalize(saved = {}) {
     pinEnabled: !!saved.pinEnabled,
     pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
     pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
+    pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
+    pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
   };
 }
 
@@ -85,13 +87,47 @@ async function sha256Hex(str) {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
-async function hashPin(pin, salt) {
-  return sha256Hex(`${salt}:${pin}`);
+
+async function pbkdf2Hex(pin, saltHex, iter = 150000) {
+  requireCrypto();
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const salt = Uint8Array.from(
+    saltHex.match(/../g).map((h) => parseInt(h, 16))
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", iterations: iter, salt },
+    key,
+    256
+  );
+  return [...new Uint8Array(bits)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
+async function hashPin(pin, salt) {
+  // Use PBKDF2 for new PINs
+  return pbkdf2Hex(pin, salt);
+}
+
 async function verifyPinAgainstState(pin, s) {
   if (!hasPin(s)) return false;
-  const h = await hashPin(pin, s.pinSalt);
-  return h === s.pinHash;
+
+  // Support both old SHA-256 format and new PBKDF2 format
+  if (s.pinAlgo === "PBKDF2") {
+    // New PBKDF2 format
+    const hash = await pbkdf2Hex(pin, s.pinSalt, s.pinIter || 150000);
+    return hash === s.pinHash;
+  } else {
+    // Legacy SHA-256 format (for backward compatibility)
+    const hash = await sha256Hex(`${s.pinSalt}:${pin}`);
+    return hash === s.pinHash;
+  }
 }
 
 function status(msg) {
@@ -184,7 +220,19 @@ async function enablePinFlow() {
   if (hasPin(s)) {
     const guess = prompt("Enter PIN to enable protection:");
     if (guess == null) return false;
-    const ok = await verifyPinAgainstState(guess, s);
+
+    // Use the same verification logic as other places
+    let ok = false;
+    if (s.pinAlgo === "PBKDF2") {
+      // New PBKDF2 format
+      const hash = await pbkdf2Hex(guess, s.pinSalt, s.pinIter || 150000);
+      ok = hash === s.pinHash;
+    } else {
+      // Legacy SHA-256 format
+      const hash = await sha256Hex(`${s.pinSalt}:${guess}`);
+      ok = hash === s.pinHash;
+    }
+
     if (!ok) {
       status("Wrong PIN");
       return false;
@@ -205,6 +253,8 @@ async function enablePinFlow() {
     const pinHash = await hashPin(p1, salt);
     s.pinSalt = salt;
     s.pinHash = pinHash;
+    s.pinAlgo = "PBKDF2";
+    s.pinIter = 150000;
   }
 
   s.pinEnabled = true;
@@ -218,9 +268,30 @@ async function disablePinFlow() {
   const all = await getSync([STORAGE_KEY]);
   const s = normalize(all[STORAGE_KEY]);
 
+  // If no PIN is set, just disable protection
+  if (!hasPin(s)) {
+    s.pinEnabled = false;
+    await setSync({ [STORAGE_KEY]: s });
+    status("PIN protection disabled");
+    await load();
+    return true;
+  }
+
   const guess = prompt("Enter PIN to disable protection:");
   if (guess == null) return false;
-  const ok = await verifyPinAgainstState(guess, s);
+
+  // Use the same verification logic as other places
+  let ok = false;
+  if (s.pinAlgo === "PBKDF2") {
+    // New PBKDF2 format
+    const hash = await pbkdf2Hex(guess, s.pinSalt, s.pinIter || 150000);
+    ok = hash === s.pinHash;
+  } else {
+    // Legacy SHA-256 format
+    const hash = await sha256Hex(`${s.pinSalt}:${guess}`);
+    ok = hash === s.pinHash;
+  }
+
   if (!ok) {
     status("Wrong PIN");
     return false;
@@ -240,7 +311,19 @@ async function setOrChangePinFlow() {
   if (hasPin(s)) {
     const cur = prompt("Enter current PIN:");
     if (cur == null) return;
-    const ok = await verifyPinAgainstState(cur, s);
+
+    // Use the same verification logic as other places
+    let ok = false;
+    if (s.pinAlgo === "PBKDF2") {
+      // New PBKDF2 format
+      const hash = await pbkdf2Hex(cur, s.pinSalt, s.pinIter || 150000);
+      ok = hash === s.pinHash;
+    } else {
+      // Legacy SHA-256 format
+      const hash = await sha256Hex(`${s.pinSalt}:${cur}`);
+      ok = hash === s.pinHash;
+    }
+
     if (!ok) {
       status("Wrong PIN");
       return;
@@ -260,6 +343,8 @@ async function setOrChangePinFlow() {
 
   s.pinSalt = randomHex(16);
   s.pinHash = await hashPin(p1, s.pinSalt);
+  s.pinAlgo = "PBKDF2";
+  s.pinIter = 150000;
 
   await setSync({ [STORAGE_KEY]: s });
   status(hasPin(s) ? "PIN updated" : "PIN set");
