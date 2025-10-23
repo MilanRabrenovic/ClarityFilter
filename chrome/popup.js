@@ -27,7 +27,15 @@ const wlCountEl = document.getElementById("wlCount");
 const wlClearBtn = document.getElementById("wlClearBtn");
 
 // ---------- State ----------
-let state = { names: [], mode: "hide", enabled: true, whitelist: [] };
+let state = {
+  names: [],
+  mode: "hide",
+  enabled: true,
+  whitelist: [],
+  pinEnabled: false,
+  pinHash: null,
+  pinSalt: null,
+};
 
 // ---------- Virtualization ----------
 const ITEM_HEIGHT = 28; // must match CSS .vlist-row height
@@ -61,6 +69,72 @@ async function migrateIfNeeded() {
   }
 }
 
+function toHost(value) {
+  if (!value) return null;
+  let v = String(value).trim().toLowerCase();
+  // strip leading dots and trailing slashes early to avoid edge mismatches
+  v = v.replace(/^\.+/, "").replace(/\/+$/, "");
+  try {
+    const u = new URL(v.includes("://") ? v : `https://${v}`);
+    return (u.hostname || "").toLowerCase();
+  } catch {
+    return v
+      .replace(/^[a-z]+:\/\//, "")
+      .split("/")[0]
+      .toLowerCase();
+  }
+}
+
+// --- PIN helpers (popup) ---
+function hasPinLocal() {
+  return !!(state.pinHash && state.pinSalt);
+}
+// ---- Secure crypto functions ----
+function requireCrypto() {
+  if (!crypto?.subtle || !crypto?.getRandomValues) {
+    throw new Error("Secure crypto unavailable");
+  }
+}
+
+async function sha256Hex(str) {
+  requireCrypto();
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(str)
+  );
+  return [...new Uint8Array(buf)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+async function verifyPinInput() {
+  if (!state.pinEnabled || !hasPinLocal()) return true; // not required
+  const guess = prompt("Enter PIN:");
+  if (guess == null) return false;
+  const h = await sha256Hex(`${state.pinSalt}:${guess}`);
+  const ok = h === state.pinHash;
+  if (!ok) setStatus("Wrong PIN", 1200);
+  return ok;
+}
+
+async function requirePinFromActiveTab(reason = "change settings") {
+  // Ask the active tab’s content script to prompt for PIN.
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tab = tabs && tabs[0];
+      if (!tab?.id) return resolve(false);
+      try {
+        chrome.tabs.sendMessage(
+          tab.id,
+          { type: "cf_require_pin", reason },
+          (resp) => resolve(!!resp?.ok)
+        );
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
 function normalize(saved) {
   return {
     names: Array.isArray(saved.names) ? saved.names.slice(0, 200) : [],
@@ -69,6 +143,10 @@ function normalize(saved) {
     whitelist: Array.isArray(saved.whitelist)
       ? saved.whitelist.slice(0, 200)
       : [],
+    // NEW:
+    pinEnabled: !!saved.pinEnabled,
+    pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
+    pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
   };
 }
 
@@ -152,22 +230,6 @@ function vlistRender() {
   const endIndex = Math.min(total, startIndex + visibleCount);
   const offsetY = startIndex * ITEM_HEIGHT;
 
-  let html = "";
-  for (let i = startIndex; i < endIndex; i++) {
-    const term = vlist.data[i] ?? "";
-    html += `
-      <div class="vlist-row" role="option" aria-label="${term}">
-        <span class="vlist-term" title="${term}">${term}</span>
-        <button
-  type="button"
-  class="row-del vlist-del"
-  data-index="${i}"
-  title="Remove ${term}"
-  aria-label="Remove ${term}"
->&times;</button>
-      </div>
-    `;
-  }
   vlistInner.style.transform = `translateY(${offsetY}px)`;
 
   const frag = document.createDocumentFragment();
@@ -275,12 +337,15 @@ async function removeTermByIndex(idx) {
     setStatus("Bad index", 900);
     return;
   }
+  if (!(await verifyPinInput())) return;
+
   state.names.splice(idx, 1);
   updateTermCount();
   await save();
   vlistSetData(state.names);
   setStatus("Removed", 700);
 }
+
 vlistInner.addEventListener(
   "pointerdown",
   (e) => {
@@ -304,12 +369,15 @@ async function removeWLByIndex(idx) {
     setStatus("Bad index", 900);
     return;
   }
+  if (!(await verifyPinInput())) return;
+
   state.whitelist.splice(idx, 1);
   updateWLCount();
   await save();
   wlistSetData(state.whitelist);
   setStatus("Removed", 700);
 }
+
 wlInner.addEventListener(
   "pointerdown",
   (e) => {
@@ -328,6 +396,17 @@ wlInner.addEventListener(
 // ---------- Clear all ----------
 bulkClearBtn.addEventListener("click", async () => {
   if (!state.names.length) return;
+
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await requirePinFromActiveTab("clear all blocked terms");
+    if (!ok) {
+      setStatus("PIN required", 1200);
+      return;
+    }
+  }
+
   if (!confirm("Remove all terms?")) return;
   state.names = [];
   updateTermCount();
@@ -335,6 +414,7 @@ bulkClearBtn.addEventListener("click", async () => {
   vlistSetData(state.names);
   setStatus("Cleared", 900);
 });
+
 wlClearBtn.addEventListener("click", async () => {
   if (!state.whitelist.length) return;
   if (!confirm("Remove all sites from whitelist?")) return;
@@ -370,24 +450,24 @@ async function addNameImmediate() {
     setStatus("Added", 700);
   } else setStatus("No new terms", 900);
 }
+
 async function addWLImmediate() {
   const raw = (wlInput.value || "").trim();
   if (!raw) return;
   wlInput.value = "";
   wlInput.focus();
 
-  // Normalize to hostname if possible, but keep original if parsing fails
-  let host = raw;
-  try {
-    const u = new URL(raw.includes("://") ? raw : `https://${raw}`);
-    host = u.hostname.toLowerCase();
-  } catch {
-    // try basic cleanup
-    host = raw
-      .replace(/^[a-z]+:\/\//, "")
-      .split("/")[0]
-      .toLowerCase();
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await verifyPinInput();
+    if (!ok) {
+      setStatus("PIN required", 1200);
+      return;
+    }
   }
+
+  const host = toHost(raw); // <— use the same logic
   if (!host) {
     setStatus("Invalid site", 900);
     return;
@@ -398,9 +478,8 @@ async function addWLImmediate() {
     updateWLCount();
     await save();
     wlistSetData(state.whitelist);
-    setStatus("Whitelisted", 700);
-    // optional: trigger a rescan + status in active tab
-    rescanActiveTabAndShowCount();
+    setStatus(`Whitelisted: ${host}`, 900);
+    rescanActiveTabAndShowCount(); // will clear page effects
   } else {
     setStatus("Already whitelisted", 900);
   }
@@ -455,7 +534,6 @@ modeEl.addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", async (e) => {
-  // Alt+Shift+F and not inside a text field
   const t = e.target;
   const tag = (t && t.tagName) || "";
   const isTyping =
@@ -464,20 +542,51 @@ document.addEventListener("keydown", async (e) => {
 
   if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
-    cfEnabled.checked = !cfEnabled.checked;
-    state.enabled = cfEnabled.checked;
+
+    const nextEnabled = !cfEnabled.checked;
+
+    const all = await getSync([STORAGE_KEY]);
+    const s = all[STORAGE_KEY] || {};
+    if (s.pinEnabled && s.pinHash && s.pinSalt) {
+      const ok = await requirePinFromActiveTab(
+        nextEnabled ? "turn filtering ON" : "turn filtering OFF"
+      );
+      if (!ok) {
+        setStatus("PIN required", 1200);
+        return;
+      }
+    }
+
+    cfEnabled.checked = nextEnabled;
+    state.enabled = nextEnabled;
     await save();
     setStatus(
-      cfEnabled.checked
-        ? "Filtering ON (shortcut)"
-        : "Filtering OFF (shortcut)",
+      nextEnabled ? "Filtering ON (shortcut)" : "Filtering OFF (shortcut)",
       1200
     );
   }
 });
 
+const openOptionsPageBtn = document.getElementById("openOptionsPage");
+openOptionsPageBtn?.addEventListener("click", () => {
+  chrome.runtime.openOptionsPage();
+});
+
 cfEnabled.addEventListener("change", async () => {
-  state.enabled = cfEnabled.checked;
+  const wantsEnabled = cfEnabled.checked;
+
+  const all = await getSync([STORAGE_KEY]);
+  const s = all[STORAGE_KEY] || {};
+  if (s.pinEnabled && s.pinHash && s.pinSalt) {
+    const ok = await verifyPinInput(); // prompt INSIDE popup
+    if (!ok) {
+      cfEnabled.checked = !wantsEnabled;
+      setStatus("PIN required", 1200);
+      return;
+    }
+  }
+
+  state.enabled = wantsEnabled;
   await save();
 });
 

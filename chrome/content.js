@@ -1,9 +1,15 @@
-// ClarityFilter - content script (Manifest V3)
+// ClarityFilter - content script (Manifest V2)
 // ------------------------------------------------
 
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
-let settings = { names: [], mode: "hide", enabled: true, whitelist: [] };
+let settings = {
+  names: [],
+  mode: "hide",
+  enabled: true,
+  whitelist: [],
+  pixelCell: 15,
+};
 let nameRegex = null;
 let observer = null;
 
@@ -18,8 +24,138 @@ function ensureStyle() {
   style.textContent = `
     .cf-blur { filter: blur(10px) !important; }
     .cf-hidden { display: none !important; }
+
+    /* === NEW: overlay system for pixelate === */
+    .cf-obscured { position: relative !important; }
+    .cf-overlay {
+      position: absolute !important;
+      inset: 0 !important;
+      z-index: 2147483647 !important;
+      pointer-events: none !important;
+    }
+    /* Pixelate look via two perpendicular repeating gradients (mosaic) */
+    .cf-overlay.pixelate {
+      --cf-a: rgba(0,0,0,.92);
+      --cf-b: #fff;
+
+      /* fallback checkerboard (works everywhere) */
+      background:
+        linear-gradient(90deg, var(--cf-a) 50%, var(--cf-b) 0) 0 0 / var(--cf-cell) var(--cf-cell),
+        linear-gradient(      var(--cf-a) 50%, var(--cf-b) 0) 0 0 / var(--cf-cell) var(--cf-cell);
+      background-size: calc(2 * var(--cf-cell)) calc(2 * var(--cf-cell));
+      background-position: 0 0, var(--cf-cell) var(--cf-cell);
+      mix-blend-mode: multiply;
+      opacity: 1 !important;
+      backdrop-filter: saturate(.7) contrast(1.1); /* optional: makes text underneath less legible */
+    }
+
+    /* Prefer repeating-conic-gradient when supported (crisper squares) */
+    @supports (background: repeating-conic-gradient(#000 0 25%, #111 0 50%)) {
+      .cf-overlay.pixelate {
+        background: repeating-conic-gradient(
+          from 0deg,
+          var(--cf-a) 0 25%,
+          var(--cf-b) 0 50%
+        );
+        background-size: var(--cf-cell) var(--cf-cell);
+      }
+    }
   `;
   document.documentElement.appendChild(style);
+}
+
+function escCloser(e) {
+  if (e.key === "Escape") closeOptionsModal();
+}
+
+// ---- PIN modal (content script only; no window.prompt) ----
+let CF_PIN_OPEN = false;
+
+function cfPinPrompt(reason = "change settings") {
+  if (CF_PIN_OPEN) return Promise.resolve(null);
+  CF_PIN_OPEN = true;
+
+  // Root + Shadow to isolate from site CSS
+  const host = document.createElement("div");
+  host.id = "cf-pin-host";
+  host.style.all = "initial";
+  host.style.position = "fixed";
+  host.style.inset = "0";
+  host.style.zIndex = "2147483647";
+  host.style.pointerEvents = "auto";
+  (document.documentElement || document.body).appendChild(host);
+
+  const shadow = host.attachShadow({ mode: "closed" });
+  const style = document.createElement("style");
+  style.textContent = `
+    :host { all: initial; }
+    .backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.35);
+    }
+    .dlg {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      min-width: 320px; max-width: 90vw;
+      font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+      background: #1f2330; color: #e9eef7; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.4);
+      padding: 16px 16px 12px;
+    }
+    .hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .hdr .title { font-weight: 600; }
+    .msg { opacity: .9; margin-bottom: 10px; }
+    .row { display: flex; gap: 8px; }
+    input[type="password"]{
+      flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #374151;
+      background: #0f1421; color: #e9eef7; outline: none;
+    }
+    input[type="password"]:focus{ border-color:#10b981; box-shadow: 0 0 0 2px rgba(79,70,229,.35); }
+    button{
+      padding: 9px 14px; border-radius: 8px; border: 0; cursor: pointer; font-weight: 600;
+    }
+    .ok { background: #10b981; color: white; }
+    .cancel { background: #374151; color: #e9eef7; }
+  `;
+  const wrap = document.createElement("div");
+  wrap.innerHTML = `
+    <div class="backdrop" part="backdrop"></div>
+    <div class="dlg" role="dialog" aria-modal="true" aria-label="ClarityFilter PIN">
+      <div class="hdr">
+        <div class="title">ClarityFilter</div>
+      </div>
+      <div class="msg">Enter PIN to <span id="reason-text"></span>:</div>
+      <div class="row">
+        <input id="cfPin" type="password" autocomplete="off" />
+        <button class="ok" id="ok">OK</button>
+        <button class="cancel" id="cancel">Cancel</button>
+      </div>
+    </div>
+  `;
+  shadow.append(style, wrap);
+
+  const input = shadow.getElementById("cfPin");
+  const ok = shadow.getElementById("ok");
+  const cancel = shadow.getElementById("cancel");
+  const reasonText = shadow.getElementById("reason-text");
+
+  // Safely set the reason text to prevent XSS
+  reasonText.textContent = reason;
+
+  let resolve;
+  const p = new Promise((res) => (resolve = res));
+
+  function close(v = null) {
+    host.remove();
+    CF_PIN_OPEN = false;
+    resolve(v);
+  }
+  ok.addEventListener("click", () => close(input.value || ""));
+  cancel.addEventListener("click", () => close(null));
+  shadow.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") ok.click();
+    if (e.key === "Escape") cancel.click();
+  });
+
+  input.focus();
+  return p;
 }
 
 // -------------------- Utils --------------------
@@ -29,6 +165,33 @@ function debounce(fn, wait = 150) {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), wait);
   };
+}
+
+function addOverlay(container, cls) {
+  if (!container || !container.appendChild) return;
+  // If already obscured, don't add again
+  if (container.querySelector(":scope > .cf-overlay")) return;
+
+  container.classList.add("cf-obscured");
+  const cs = getComputedStyle(container);
+  if (cs && cs.display === "contents") {
+    // climb one level to a paintable box
+    if (container.parentElement) container = container.parentElement;
+  }
+  const ov = document.createElement("div");
+  ov.className = `cf-overlay ${cls}`;
+  if (cls.includes("pixelate")) {
+    const cell = Number.isFinite(settings.pixelCell) ? settings.pixelCell : 15;
+    ov.style.setProperty("--cf-cell", `${cell}px`);
+  }
+  container.appendChild(ov);
+}
+
+function removeOverlays(root = document) {
+  root.querySelectorAll(".cf-overlay").forEach((n) => n.remove());
+  root
+    .querySelectorAll(".cf-obscured")
+    .forEach((n) => n.classList.remove("cf-obscured"));
 }
 
 // ---- Whitelist helpers ----
@@ -55,24 +218,32 @@ function isWhitelisted(url, list) {
   if (!h || !Array.isArray(list) || !list.length) return false;
   for (const ent of list) {
     const ph = toHost(ent);
-    if (ph && isHostMatch(h, ph)) return true;
+    if (!ph) continue; // ignore bad entries
+    if (h === ph || h.endsWith("." + ph)) return true;
   }
   return false;
 }
 
 // Unicode-aware regex; allow short case endings (e.g., "Vučiću")
 function buildRegex(names) {
-  const cleaned = (names || [])
+  // Security: Limit input size to prevent ReDoS attacks
+  if (!Array.isArray(names) || names.length === 0) return null;
+  if (names.length > 1000) return null; // Limit total count
+
+  const cleaned = names
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
-    // Proper escaping: [, ], and \ must be escaped inside the class
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    .filter((n) => n.length <= 50) // Limit individual name length
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")); // Proper escaping
 
   if (!cleaned.length) return null;
 
   // Join all terms. No suffix allowance here.
   const core = cleaned.join("|");
+
+  // Security: Limit total pattern length to prevent ReDoS
+  if (core.length > 5000) return null;
 
   // Whole-word boundaries against Unicode letters/numbers/underscore.
   // Hyphen and other punctuation count as boundaries, so "AI-" matches.
@@ -83,10 +254,15 @@ function buildRegex(names) {
   } catch {
     // Fallback for environments without lookbehind.
     // This includes the boundary chars in the match, so replacement keeps them.
-    return new RegExp(
-      `(^|[^\\p{L}\\p{N}_])(?:${core})(?=[^\\p{L}\\p{N}_]|$)`,
-      "iu"
-    );
+    try {
+      return new RegExp(
+        `(^|[^\\p{L}\\p{N}_])(?:${core})(?=[^\\p{L}\\p{N}_]|$)`,
+        "iu"
+      );
+    } catch {
+      // Fail safely if regex construction fails
+      return null;
+    }
   }
 }
 
@@ -98,7 +274,9 @@ function elementMatchesText(text) {
 function shouldTarget(el) {
   if (!el || !el.classList) return true;
   return (
-    !el.classList.contains("cf-blur") && !el.classList.contains("cf-hidden")
+    !el.classList.contains("cf-blur") &&
+    !el.classList.contains("cf-hidden") &&
+    !el.classList.contains("cf-obscured") // NEW
   );
 }
 
@@ -143,7 +321,6 @@ const WRAPPER_TOKENS = new Set([
   "feed",
   "stream",
   "section",
-  "group",
   "results",
   "blocks",
   "block",
@@ -157,6 +334,145 @@ const WRAPPER_TOKENS = new Set([
   "panel",
   "rail",
 ]);
+
+// --- PIN helpers ---
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(str)
+  );
+  return [...new Uint8Array(buf)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function getSettings() {
+  const all = await chrome.storage.sync.get(STORAGE_KEY);
+  const s = all[STORAGE_KEY] || {};
+  return {
+    ...s,
+    pinEnabled: !!s.pinEnabled,
+    pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
+    pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+  };
+}
+
+async function requirePin(reason = "change settings") {
+  const s = await getSettings();
+  if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
+
+  const input = await cfPinPrompt(reason);
+  if (input == null) return false;
+  try {
+    const hash = await sha256Hex(`${s.pinSalt}:${input}`);
+    return hash === s.pinHash;
+  } catch {
+    return false;
+  }
+}
+
+const IS_TOP = window === window.top;
+
+// Rate limiting for toggle operations
+let lastToggleTime = 0;
+const TOGGLE_COOLDOWN = 2000; // 2 seconds between toggles
+
+document.addEventListener("keydown", async (e) => {
+  if (!IS_TOP) return;
+  if (e.repeat) return;
+  const t = e.target;
+  const tag = (t && t.tagName) || "";
+  const typing = tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable;
+  if (typing) return;
+
+  // Alt+Shift+F (no Ctrl/Cmd)
+  if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+
+    if (
+      !(await requirePin(
+        settings.enabled ? "turn filtering OFF" : "turn filtering ON"
+      ))
+    ) {
+      // wrong/cancelled PIN -> do nothing
+      return;
+    }
+
+    // flip enabled in storage (content script should NOT directly mutate local `settings`
+    // without writing to storage; storage.onChanged will re-sync and rescan)
+    try {
+      const all = await chrome.storage.sync.get(STORAGE_KEY);
+      const prev = all[STORAGE_KEY] || {};
+      await chrome.storage.sync.set({
+        [STORAGE_KEY]: { ...prev, enabled: !prev.enabled },
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+});
+
+// Let popup/options ask us to verify a PIN when needed.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "cf_require_pin") {
+    (async () => {
+      const ok = await requirePin(msg.reason || "change settings");
+      sendResponse({ ok });
+    })();
+    return true; // keep port open
+  }
+
+  // Handle toggle filter command from background script
+  if (msg?.type === "cf_toggle_filter") {
+    (async () => {
+      try {
+        // Rate limiting check
+        const now = Date.now();
+        if (now - lastToggleTime < TOGGLE_COOLDOWN) {
+          sendResponse({
+            success: false,
+            reason: "Please wait before toggling again",
+          });
+          return;
+        }
+        lastToggleTime = now;
+
+        // Get current settings from storage
+        const all = await chrome.storage.sync.get(STORAGE_KEY);
+        const current = all[STORAGE_KEY] || {};
+
+        // Verify PIN if enabled
+        if (current.pinEnabled) {
+          const ok = await requirePin(
+            current.enabled ? "turn filtering OFF" : "turn filtering ON"
+          );
+          if (!ok) {
+            sendResponse({ success: false, reason: "PIN verification failed" });
+            return;
+          }
+        }
+
+        // Toggle the enabled state
+        const newEnabled = !current.enabled;
+        await chrome.storage.sync.set({
+          [STORAGE_KEY]: { ...current, enabled: newEnabled },
+        });
+
+        // Update local settings immediately
+        settings.enabled = newEnabled;
+
+        // Trigger rescan
+        scan();
+
+        sendResponse({ success: true, enabled: newEnabled });
+      } catch (error) {
+        console.error("[ClarityFilter] Toggle error:", error);
+        sendResponse({ success: false, reason: "Toggle failed" });
+      }
+    })();
+    return true; // keep port open
+  }
+});
 
 function tokenHit(tokens, set) {
   for (const t of tokens) if (set.has(t)) return true;
@@ -179,6 +495,18 @@ function looksHuge(el) {
   return (tooWide && tooTall) || r.height >= 1200;
 }
 function looksLikeWrapper(el) {
+  // Never treat a real article node as a generic wrapper.
+  if (el?.tagName === "ARTICLE" || el?.getAttribute?.("role") === "article") {
+    return false;
+  }
+  const dt = (el?.getAttribute?.("data-testid") || "").toLowerCase();
+  if (
+    /(grid|stack|cluster|wrapper|container|list|section|columns|row|rail|unit)/.test(
+      dt
+    )
+  ) {
+    return true;
+  }
   return tokenHit(classTokens(el), WRAPPER_TOKENS);
 }
 function looksLikeItem(el) {
@@ -192,12 +520,39 @@ function hasManyHeadlines(el) {
     ).length >= 3
   );
 }
-function hasManyCardDescendants(el) {
+// A descendant counts as a “card item” only if it’s article-ish AND has media + text.
+function isCardish(el) {
+  if (!el || el === document) return false;
+  const dt = (el.getAttribute?.("data-testid") || "").toLowerCase();
+  const articley =
+    el.tagName === "ARTICLE" ||
+    el.getAttribute?.("role") === "article" ||
+    dt.includes("card") ||
+    looksLikeItem(el);
   return (
-    el.querySelectorAll(
-      "article,[role='article'],.news,.post,.story,.result,.entry,.tile,.card,[class*='card' i]:not([class*='cards' i])"
-    ).length >= 2
+    articley &&
+    hasMedia(el) &&
+    hasCardText(el) &&
+    // Avoid counting the container itself
+    el !== this
   );
+}
+
+function hasManyCardDescendants(root) {
+  // Scan a reasonable number of descendants to keep perf predictable
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let count = 0,
+    n = 0;
+  while (walker.nextNode()) {
+    const el = walker.currentNode;
+    n++;
+    if (n > 2000) break; // bail on gigantic DOMs
+    if (isCardish.call(root, el)) {
+      count++;
+      if (count >= 2) return true;
+    }
+  }
+  return false;
 }
 function isForbiddenContainer(el) {
   if (!el) return true;
@@ -225,6 +580,39 @@ function hasCardText(el) {
     "h1,h2,h3,[role='heading'],[class*='title' i],[class*='headline' i],[class*='description' i],[data-testid*='text' i],p"
   );
 }
+// Find the smallest ancestor (within a few levels) that contains both media + text,
+// and that doesn't look like a giant multi-card wrapper.
+function findCardAncestor(el, maxHops = 6) {
+  let cur = el;
+  for (let i = 0; cur && i < maxHops; i++, cur = cur.parentElement) {
+    if (!cur) break;
+    // Skip "display: contents" containers – absolutely positioned overlay won’t render there
+    const cs = getComputedStyle(cur);
+    if (cs && cs.display === "contents") continue;
+    if (
+      hasMedia(cur) &&
+      hasCardText(cur) &&
+      !hasManyCardDescendants(cur) &&
+      !looksLikeWrapper(cur) &&
+      !isForbiddenContainer(cur)
+    ) {
+      return cur;
+    }
+  }
+  return null;
+}
+
+const cardish = document.querySelectorAll(`
+  article:has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+  [data-testid*="card" i]:not([data-testid*="grid" i]):not([data-testid*="stack" i]):has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+  li:has(img, picture, video):has(h1,h2,h3,p)
+`);
+cardish.forEach((c) => {
+  if (!shouldTarget(c) || hasManyCardDescendants(c)) return;
+  const tn = findFirstMatchingTextNode(c);
+  if (tn) applyAction(c);
+});
+
 function hasLinkImgTime(el) {
   const a = el.querySelector("a[href]");
   const img = el.querySelector("img, picture, [style*='background-image' i]");
@@ -402,6 +790,20 @@ function promoteAcrossSiblings(el) {
     !isForbiddenContainer(parent)
   )
     return parent;
+  // NEW: if sibling cluster (image + title) lives under grandparent, try one hop up
+  const gp = parent.parentElement;
+  if (gp) {
+    const gpLooksMulti =
+      hasManyCardDescendants(gp) || looksLikeWrapper(gp) || looksHuge(gp);
+    if (
+      hasMedia(gp) &&
+      hasCardText(gp) &&
+      !gpLooksMulti &&
+      !isForbiddenContainer(gp)
+    ) {
+      return gp;
+    }
+  }
   return el;
 }
 function promoteToCardBoundary(el) {
@@ -429,6 +831,25 @@ function pickContainer(el) {
     .post,.news-item,.story,.card,.teaser,.result,.entry,.tile,.search-result,.list-item,
     [class*="card" i]:not([class*="cards" i]):not([class*="wrapper" i]):not([class*="wrap" i]):not([class*="list" i]):not([class*="grid" i]):not([class*="container" i]):not([class*="content" i]):not([class*="row" i]):not([class*="results" i]):not([class*="blocks" i]):not([class*="block" i]):not([class*="section" i])
   `);
+
+  // NEW: if the closest <article> contains both media and text (single-card),
+  // prefer that. This matches your screenshot structure exactly.
+  const nearestArticle = el.closest("article,[role='article']");
+  if (
+    nearestArticle &&
+    hasMedia(nearestArticle) &&
+    hasCardText(nearestArticle) &&
+    !hasManyCardDescendants(nearestArticle) &&
+    !isForbiddenContainer(nearestArticle)
+  ) {
+    return nearestArticle;
+  }
+
+  // NEW: Try the smallest ancestor that contains BOTH image/media and card text.
+  const bothAncestor = findCardAncestor(el, 6);
+  if (bothAncestor) {
+    return bothAncestor;
+  }
 
   const cands = collectCandidates(el);
   let best = null,
@@ -500,13 +921,47 @@ function clearEffects() {
   document
     .querySelectorAll(".cf-blur")
     .forEach((n) => n.classList.remove("cf-blur"));
+  removeOverlays(document); // NEW
+}
+
+function clampToReasonable(container, anchorEl) {
+  if (!container) return container;
+  const r = container.getBoundingClientRect?.();
+  if (!r) return container;
+  const vw = Math.max(
+    320,
+    window.innerWidth || document.documentElement.clientWidth || 0
+  );
+  const vh = Math.max(
+    320,
+    window.innerHeight || document.documentElement.clientHeight || 0
+  );
+
+  const tooWide = r.width >= vw * 0.85;
+  const tooTall = r.height >= vh * 0.7;
+  const tooHeady = hasManyHeadlines(container);
+  const isCluster = hasManyCardDescendants(container);
+  const tooBig = (tooWide && tooTall) || tooHeady || isCluster;
+  if (!tooBig) return container;
+
+  // Prefer the smallest nearby card-ish thing that still covers the match.
+  const small =
+    anchorEl?.closest?.(
+      'article,[role="article"],li,.card,.story,.tile,[data-testid*="card" i]'
+    ) ||
+    anchorEl?.parentElement ||
+    container;
+  return small;
 }
 
 // -------------------- Actions --------------------
 function applyAction(el) {
   if (!shouldTarget(el)) return;
 
-  const container = pickContainer(el) || el;
+  let container = pickContainer(el) || el;
+  container = clampToReasonable(container, el);
+
+  if (container.querySelector(":scope > .cf-overlay")) return;
 
   if (!DEBUG_ALERT && container && container.style) {
     const old = container.style.outline;
@@ -534,6 +989,10 @@ function applyAction(el) {
         lastScanBlockedCount++;
       }
       break;
+    case "pixelate":
+      addOverlay(container, "pixelate");
+      lastScanBlockedCount++;
+      break;
     case "replace":
       replaceText(container);
       lastScanBlockedCount++;
@@ -542,21 +1001,51 @@ function applyAction(el) {
 }
 
 function replaceText(root) {
-  if (!nameRegex) return;
+  if (!nameRegex || !root) return;
+
+  // Security: Validate root element
+  if (
+    typeof root.nodeType !== "number" ||
+    root.nodeType !== Node.ELEMENT_NODE
+  ) {
+    return;
+  }
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const t = node.nodeValue;
-      if (!t || t.trim().length === 0) return NodeFilter.FILTER_REJECT;
+      if (!t || typeof t !== "string" || t.trim().length === 0)
+        return NodeFilter.FILTER_REJECT;
+
+      // Security: Limit text length to prevent performance issues
+      if (t.length > 10000) return NodeFilter.FILTER_REJECT;
+
       return nameRegex.test(t)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     },
   });
+
   const nodes = [];
   let current;
-  while ((current = walker.nextNode())) nodes.push(current);
+  let nodeCount = 0;
+  const MAX_NODES = 1000; // Security: Limit number of nodes processed
+
+  while ((current = walker.nextNode()) && nodeCount < MAX_NODES) {
+    nodes.push(current);
+    nodeCount++;
+  }
+
   nodes.forEach((node) => {
-    node.nodeValue = node.nodeValue.replace(nameRegex, "████");
+    try {
+      // Security: Validate node before replacement
+      if (node && node.nodeValue && typeof node.nodeValue === "string") {
+        node.nodeValue = node.nodeValue.replace(nameRegex, "████");
+      }
+    } catch (error) {
+      // Fail safely if replacement fails
+      console.warn("[ClarityFilter] Text replacement failed:", error);
+    }
   });
 }
 
@@ -584,7 +1073,27 @@ function scan() {
   }
 
   ensureStyle();
+
   lastScanBlockedCount = 0;
+
+  // Pass 0 (fast path for modern browsers): pick card-like nodes that have media + text.
+  // Do this *after* nameRegex exists.
+  try {
+    if (CSS.supports("selector(:has(*))")) {
+      const cardish = document.querySelectorAll(`
+        article:has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+        [class*="card" i]:not([class*="cards" i]):has(img, picture, video):has(h1,h2,h3,p,[class*="title" i],[class*="headline" i]),
+        li:has(img, picture, video):has(h1,h2,h3,p)
+      `);
+      cardish.forEach((c) => {
+        if (!shouldTarget(c) || hasManyCardDescendants(c)) return;
+        const tn = findFirstMatchingTextNode(c);
+        if (tn) applyAction(c);
+      });
+    }
+  } catch {
+    /* old engines without selector support */
+  }
 
   // Pass 1: likely item containers -> anchor via text node
   const containers = document.querySelectorAll(`
@@ -667,6 +1176,7 @@ function loadSettingsAndInit() {
         mode: saved.mode || "hide",
         enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
         whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
+        pixelCell: Number.isFinite(saved.pixelCell) ? saved.pixelCell : 15,
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -684,12 +1194,34 @@ chrome.storage.sync.get(null, (all) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if ((area !== "sync" && area !== "local") || !changes[STORAGE_KEY]) return;
   const newVal = changes[STORAGE_KEY].newValue || {};
+
+  // Security: Validate and sanitize settings
   settings = {
-    names: Array.isArray(newVal.names) ? newVal.names : [],
-    mode: newVal.mode || "hide",
+    names: Array.isArray(newVal.names)
+      ? newVal.names.filter((n) => typeof n === "string" && n.length <= 100)
+      : [],
+    mode:
+      typeof newVal.mode === "string" &&
+      ["hide", "blur", "pixelate", "replace"].includes(newVal.mode)
+        ? newVal.mode
+        : "hide",
     enabled: typeof newVal.enabled === "boolean" ? newVal.enabled : true,
-    whitelist: Array.isArray(newVal.whitelist) ? newVal.whitelist : [],
+    whitelist: Array.isArray(newVal.whitelist)
+      ? newVal.whitelist.filter((w) => typeof w === "string" && w.length <= 200)
+      : [],
+    pixelCell:
+      Number.isFinite(newVal.pixelCell) &&
+      newVal.pixelCell >= 5 &&
+      newVal.pixelCell <= 50
+        ? newVal.pixelCell
+        : 15,
   };
+
+  // Security: Limit total names count
+  if (settings.names.length > 1000) {
+    settings.names = settings.names.slice(0, 1000);
+  }
+
   nameRegex = buildRegex(settings.names);
 
   if (!settings.enabled || isWhitelisted(location.href, settings.whitelist)) {
@@ -703,6 +1235,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   document
     .querySelectorAll(".cf-blur")
     .forEach((n) => n.classList.remove("cf-blur"));
+  removeOverlays(document);
   scan();
 });
 

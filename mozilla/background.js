@@ -48,23 +48,6 @@ async function verifyViaContentScript(reason) {
   }
 }
 
-// Fallback: inject a simple prompt() in the page and verify here in background
-async function verifyViaInjectedPrompt(reason, salt, expectedHash) {
-  try {
-    const id = await activeTabId();
-    if (!id) return false;
-    const [pin] = await api.tabs.executeScript(id, {
-      code: `prompt(${JSON.stringify("Enter PIN to " + reason + ":")})`,
-    });
-    if (pin == null) return false;
-    const hash = await sha256Hex(`${salt}|${pin}`);
-    return hash === expectedHash;
-  } catch {
-    // Some pages disallow injection (addons store, internal pages, etc.)
-    return false;
-  }
-}
-
 async function ensurePinAuthorized(reason, s) {
   if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
 

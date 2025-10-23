@@ -121,7 +121,7 @@ function cfPinPrompt(reason = "change settings") {
       <div class="hdr">
         <div class="title">ClarityFilter</div>
       </div>
-      <div class="msg">Enter PIN to ${reason}:</div>
+      <div class="msg">Enter PIN to <span id="reason-text"></span>:</div>
       <div class="row">
         <input id="cfPin" type="password" autocomplete="off" />
         <button class="ok" id="ok">OK</button>
@@ -134,6 +134,10 @@ function cfPinPrompt(reason = "change settings") {
   const input = shadow.getElementById("cfPin");
   const ok = shadow.getElementById("ok");
   const cancel = shadow.getElementById("cancel");
+  const reasonText = shadow.getElementById("reason-text");
+
+  // Safely set the reason text to prevent XSS
+  reasonText.textContent = reason;
 
   let resolve;
   const p = new Promise((res) => (resolve = res));
@@ -222,17 +226,24 @@ function isWhitelisted(url, list) {
 
 // Unicode-aware regex; allow short case endings (e.g., "Vučiću")
 function buildRegex(names) {
-  const cleaned = (names || [])
+  // Security: Limit input size to prevent ReDoS attacks
+  if (!Array.isArray(names) || names.length === 0) return null;
+  if (names.length > 1000) return null; // Limit total count
+
+  const cleaned = names
     .map((n) => String(n || "").trim())
     .filter(Boolean)
     .map((n) => n.normalize("NFC"))
-    // Proper escaping: [, ], and \ must be escaped inside the class
-    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    .filter((n) => n.length <= 50) // Limit individual name length
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")); // Proper escaping
 
   if (!cleaned.length) return null;
 
   // Join all terms. No suffix allowance here.
   const core = cleaned.join("|");
+
+  // Security: Limit total pattern length to prevent ReDoS
+  if (core.length > 5000) return null;
 
   // Whole-word boundaries against Unicode letters/numbers/underscore.
   // Hyphen and other punctuation count as boundaries, so "AI-" matches.
@@ -243,10 +254,15 @@ function buildRegex(names) {
   } catch {
     // Fallback for environments without lookbehind.
     // This includes the boundary chars in the match, so replacement keeps them.
-    return new RegExp(
-      `(^|[^\\p{L}\\p{N}_])(?:${core})(?=[^\\p{L}\\p{N}_]|$)`,
-      "iu"
-    );
+    try {
+      return new RegExp(
+        `(^|[^\\p{L}\\p{N}_])(?:${core})(?=[^\\p{L}\\p{N}_]|$)`,
+        "iu"
+      );
+    } catch {
+      // Fail safely if regex construction fails
+      return null;
+    }
   }
 }
 
@@ -356,6 +372,10 @@ async function requirePin(reason = "change settings") {
 }
 
 const IS_TOP = window === window.top;
+
+// Rate limiting for toggle operations
+let lastToggleTime = 0;
+const TOGGLE_COOLDOWN = 2000; // 2 seconds between toggles
 
 document.addEventListener("keydown", async (e) => {
   if (!IS_TOP) return;
@@ -930,21 +950,51 @@ function applyAction(el) {
 }
 
 function replaceText(root) {
-  if (!nameRegex) return;
+  if (!nameRegex || !root) return;
+
+  // Security: Validate root element
+  if (
+    typeof root.nodeType !== "number" ||
+    root.nodeType !== Node.ELEMENT_NODE
+  ) {
+    return;
+  }
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const t = node.nodeValue;
-      if (!t || t.trim().length === 0) return NodeFilter.FILTER_REJECT;
+      if (!t || typeof t !== "string" || t.trim().length === 0)
+        return NodeFilter.FILTER_REJECT;
+
+      // Security: Limit text length to prevent performance issues
+      if (t.length > 10000) return NodeFilter.FILTER_REJECT;
+
       return nameRegex.test(t)
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_REJECT;
     },
   });
+
   const nodes = [];
   let current;
-  while ((current = walker.nextNode())) nodes.push(current);
+  let nodeCount = 0;
+  const MAX_NODES = 1000; // Security: Limit number of nodes processed
+
+  while ((current = walker.nextNode()) && nodeCount < MAX_NODES) {
+    nodes.push(current);
+    nodeCount++;
+  }
+
   nodes.forEach((node) => {
-    node.nodeValue = node.nodeValue.replace(nameRegex, "████");
+    try {
+      // Security: Validate node before replacement
+      if (node && node.nodeValue && typeof node.nodeValue === "string") {
+        node.nodeValue = node.nodeValue.replace(nameRegex, "████");
+      }
+    } catch (error) {
+      // Fail safely if replacement fails
+      console.warn("[ClarityFilter] Text replacement failed:", error);
+    }
   });
 }
 
@@ -1056,6 +1106,57 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     });
     return true;
   }
+
+  // Handle toggle filter command from background script
+  if (msg?.type === "cf_toggle_filter") {
+    (async () => {
+      try {
+        // Rate limiting check
+        const now = Date.now();
+        if (now - lastToggleTime < TOGGLE_COOLDOWN) {
+          sendResponse({
+            success: false,
+            reason: "Please wait before toggling again",
+          });
+          return;
+        }
+        lastToggleTime = now;
+
+        // Get current settings from storage
+        const all = await chrome.storage.sync.get(STORAGE_KEY);
+        const current = all[STORAGE_KEY] || {};
+
+        // Verify PIN if enabled
+        if (current.pinEnabled) {
+          const ok = await requirePin(
+            current.enabled ? "turn filtering OFF" : "turn filtering ON"
+          );
+          if (!ok) {
+            sendResponse({ success: false, reason: "PIN verification failed" });
+            return;
+          }
+        }
+
+        // Toggle the enabled state
+        const newEnabled = !current.enabled;
+        await chrome.storage.sync.set({
+          [STORAGE_KEY]: { ...current, enabled: newEnabled },
+        });
+
+        // Update local settings immediately
+        settings.enabled = newEnabled;
+
+        // Trigger rescan
+        scan();
+
+        sendResponse({ success: true, enabled: newEnabled });
+      } catch (error) {
+        console.error("[ClarityFilter] Toggle error:", error);
+        sendResponse({ success: false, reason: "Toggle failed" });
+      }
+    })();
+    return true; // keep port open
+  }
 });
 
 // Settings init & changes
@@ -1093,13 +1194,34 @@ chrome.storage.sync.get(null, (all) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if ((area !== "sync" && area !== "local") || !changes[STORAGE_KEY]) return;
   const newVal = changes[STORAGE_KEY].newValue || {};
+
+  // Security: Validate and sanitize settings
   settings = {
-    names: Array.isArray(newVal.names) ? newVal.names : [],
-    mode: newVal.mode || "hide",
+    names: Array.isArray(newVal.names)
+      ? newVal.names.filter((n) => typeof n === "string" && n.length <= 100)
+      : [],
+    mode:
+      typeof newVal.mode === "string" &&
+      ["hide", "blur", "pixelate", "replace"].includes(newVal.mode)
+        ? newVal.mode
+        : "hide",
     enabled: typeof newVal.enabled === "boolean" ? newVal.enabled : true,
-    whitelist: Array.isArray(newVal.whitelist) ? newVal.whitelist : [],
-    pixelCell: Number.isFinite(newVal.pixelCell) ? newVal.pixelCell : 15,
+    whitelist: Array.isArray(newVal.whitelist)
+      ? newVal.whitelist.filter((w) => typeof w === "string" && w.length <= 200)
+      : [],
+    pixelCell:
+      Number.isFinite(newVal.pixelCell) &&
+      newVal.pixelCell >= 5 &&
+      newVal.pixelCell <= 50
+        ? newVal.pixelCell
+        : 15,
   };
+
+  // Security: Limit total names count
+  if (settings.names.length > 1000) {
+    settings.names = settings.names.slice(0, 1000);
+  }
+
   nameRegex = buildRegex(settings.names);
 
   if (!settings.enabled || isWhitelisted(location.href, settings.whitelist)) {

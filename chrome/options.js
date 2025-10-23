@@ -162,9 +162,13 @@ async function saveGeneralOnly() {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs && tabs[0];
       if (!tab?.id) return;
-      try {
-        chrome.tabs.sendMessage(tab.id, { type: "cf_rescan" }, () => void 0);
-      } catch {}
+      chrome.tabs.sendMessage(tab.id, { type: "cf_rescan" }, (response) => {
+        // Ignore errors - content script might not be available on this page
+        if (chrome.runtime.lastError) {
+          // Expected for pages without content scripts (chrome://, extension pages, etc.)
+          return;
+        }
+      });
     });
   } catch (err) {
     console.error("Options save failed:", err);

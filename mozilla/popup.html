@@ -2,23 +2,19 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+    />
     <title>ClarityFilter</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header
-      class="row"
-      style="
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 16px;
-      "
-    >
+    <header class="header-row">
       <button class="btn-options" id="openOptionsPage" title="Open Options">
         ⚙️
       </button>
-      <h1 style="margin: 0; font-size: 20px">ClarityFilter</h1>
+      <h1 class="header-title">ClarityFilter</h1>
 
       <label class="switch" title="Pause/Resume filtering">
         <input id="cfEnabled" type="checkbox" />
@@ -29,15 +25,15 @@
     <!-- Blocked terms -->
     <section>
       <label for="nameInput">Add a term you want to block</label>
-      <form id="addForm" class="add-row" style="display: flex; gap: 6px">
+      <form id="addForm" class="add-row">
         <input
           id="nameInput"
           type="text"
           placeholder="Filter out:"
-          style="flex: 1; padding: 6px 8px"
+          class="add-input"
           autocomplete="off"
         />
-        <button id="addBtn" type="submit" title="Add" style="padding: 6px 10px">
+        <button id="addBtn" type="submit" title="Add" class="add-btn">
           Add
         </button>
       </form>
@@ -73,27 +69,22 @@
     </section>
 
     <!-- Whitelist sites -->
-    <section style="margin-top: 12px">
+    <section class="section-margin">
       <label for="wlInput">Whitelist sites (no filtering)</label>
-      <div class="muted" style="margin: 4px 0 6px 0; font-size: 12px">
+      <div class="muted muted-margin">
         Examples: <code>example.com</code>, <code>news.bbc.co.uk</code>, or full
         URL like <code>https://example.com</code>
       </div>
 
-      <form id="wlForm" class="add-row" style="display: flex; gap: 6px">
+      <form id="wlForm" class="add-row">
         <input
           id="wlInput"
           type="text"
           placeholder="example.com"
-          style="flex: 1; padding: 6px 8px"
+          class="add-input"
           autocomplete="off"
         />
-        <button
-          id="wlAddBtn"
-          type="submit"
-          title="Add"
-          style="padding: 6px 10px"
-        >
+        <button id="wlAddBtn" type="submit" title="Add" class="wl-btn">
           Add
         </button>
       </form>

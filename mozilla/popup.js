@@ -89,31 +89,22 @@ function toHost(value) {
 function hasPinLocal() {
   return !!(state.pinHash && state.pinSalt);
 }
-async function sha256Hex(str) {
-  try {
-    const enc = new TextEncoder().encode(str);
-    const buf = await crypto.subtle.digest("SHA-256", enc);
-    return [...new Uint8Array(buf)]
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  } catch {
-    let h1 = 0,
-      h2 = 0;
-    for (let i = 0; i < str.length; i++) {
-      h1 = (h1 * 31 + str.charCodeAt(i)) | 0;
-      h2 = (h2 * 131 + str.charCodeAt(i)) | 0;
-    }
-    return (
-      Math.abs(h1).toString(16).padStart(8, "0") +
-      Math.abs(h2).toString(16).padStart(8, "0") +
-      Math.abs(h1 ^ h2)
-        .toString(16)
-        .padStart(8, "0") +
-      Math.abs(h1 + h2)
-        .toString(16)
-        .padStart(8, "0")
-    );
+// ---- Secure crypto functions ----
+function requireCrypto() {
+  if (!crypto?.subtle || !crypto?.getRandomValues) {
+    throw new Error("Secure crypto unavailable");
   }
+}
+
+async function sha256Hex(str) {
+  requireCrypto();
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(str)
+  );
+  return [...new Uint8Array(buf)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 async function verifyPinInput() {
   if (!state.pinEnabled || !hasPinLocal()) return true; // not required
@@ -239,22 +230,6 @@ function vlistRender() {
   const endIndex = Math.min(total, startIndex + visibleCount);
   const offsetY = startIndex * ITEM_HEIGHT;
 
-  let html = "";
-  for (let i = startIndex; i < endIndex; i++) {
-    const term = vlist.data[i] ?? "";
-    html += `
-      <div class="vlist-row" role="option" aria-label="${term}">
-        <span class="vlist-term" title="${term}">${term}</span>
-        <button
-  type="button"
-  class="row-del vlist-del"
-  data-index="${i}"
-  title="Remove ${term}"
-  aria-label="Remove ${term}"
->&times;</button>
-      </div>
-    `;
-  }
   vlistInner.style.transform = `translateY(${offsetY}px)`;
 
   const frag = document.createDocumentFragment();
