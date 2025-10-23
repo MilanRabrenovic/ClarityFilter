@@ -82,9 +82,7 @@ async function promptPin(reason) {
         60_000
       );
       if (resp?.ok === true) return true;
-    } catch (error) {
-
-    }
+    } catch (error) {}
   }
 
   // Final fallback: open popup (for chrome:// pages or other edge cases)
@@ -111,13 +109,9 @@ async function ensurePinAuthorized(reason, s) {
   return promptPin(reason);
 }
 
-
-
-
 let toggling = false;
 
 api.commands.onCommand.addListener(async (command) => {
-
   if (command !== "toggle-filter" || toggling) return;
   toggling = true;
 
@@ -132,7 +126,6 @@ api.commands.onCommand.addListener(async (command) => {
       : "turn filtering ON";
     const allowed = await ensurePinAuthorized(reason, current0);
     if (!allowed) {
-    
       return;
     }
 
@@ -143,7 +136,6 @@ api.commands.onCommand.addListener(async (command) => {
     // Atomic toggle
     const next = { ...current1, enabled: !current1.enabled };
     await api.storage.sync.set({ [STORAGE_KEY]: next });
-
 
     // Ping active tab so content script rescans
     try {
@@ -171,8 +163,9 @@ api.runtime.onInstalled.addListener(async () => {
         pinEnabled: false,
         pinHash: null,
         pinSalt: null,
+        pinAlgo: "PBKDF2",
+        pinIter: 150000,
       },
     });
-
   }
 });

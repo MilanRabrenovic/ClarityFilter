@@ -176,6 +176,8 @@ chrome.runtime.onInstalled.addListener(async () => {
         pinEnabled: false,
         pinHash: null,
         pinSalt: null,
+        pinAlgo: "PBKDF2",
+        pinIter: 150000,
       },
     });
   }

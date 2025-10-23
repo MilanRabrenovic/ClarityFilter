@@ -96,17 +96,6 @@ function requireCrypto() {
   }
 }
 
-async function sha256Hex(str) {
-  requireCrypto();
-  const buf = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(str)
-  );
-  return [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
 async function pbkdf2Hex(pin, saltHex, iter = 150000) {
   requireCrypto();
   const enc = new TextEncoder();
@@ -134,15 +123,8 @@ async function verifyPinInput() {
   const guess = prompt("Enter PIN:");
   if (guess == null) return false;
 
-  // Support both old SHA-256 format and new PBKDF2 format
-  let hash;
-  if (state.pinAlgo === "PBKDF2") {
-    // New PBKDF2 format
-    hash = await pbkdf2Hex(guess, state.pinSalt, state.pinIter || 150000);
-  } else {
-    // Legacy SHA-256 format (for backward compatibility)
-    hash = await sha256Hex(`${state.pinSalt}:${guess}`);
-  }
+  // Use PBKDF2 for secure PIN verification
+  const hash = await pbkdf2Hex(guess, state.pinSalt, state.pinIter || 150000);
 
   const ok = hash === state.pinHash;
   if (!ok) setStatus("Wrong PIN", 1200);

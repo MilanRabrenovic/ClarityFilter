@@ -1050,16 +1050,9 @@ function applyAction(el) {
 
   if (container.querySelector(":scope > .cf-overlay")) return;
 
-  if (!DEBUG_ALERT && container && container.style) {
+  if (container && container.style) {
     const old = container.style.outline;
     setTimeout(() => (container.style.outline = old || ""), 600);
-  }
-  if (DEBUG_ALERT) {
-    const sample = (container.innerText || container.textContent || "").slice(
-      0,
-      200
-    );
-    alert("Matched in:\n\n" + sample);
   }
   if (isForbiddenContainer(container)) return;
 
