@@ -28,7 +28,6 @@ async function getMainFrameId(tabId) {
     const mainFrame = frames.find((frame) => frame.frameId === 0);
     return mainFrame ? mainFrame.frameId : 0;
   } catch (error) {
-    console.log("[ClarityFilter] Could not get frames, using default:", error);
     return 0; // Default to main frame
   }
 }
@@ -55,17 +54,17 @@ function sendMessageWithTimeout(tabId, msg, ms = 20000, frameId = null) {
 }
 
 async function promptPin(reason) {
-  console.log("[ClarityFilter] Starting PIN prompt for:", reason);
+
 
   const id = await activeTabId();
   if (!id) {
-    console.log("[ClarityFilter] No active tab found");
+
     return false;
   }
 
   // Get the main frame ID to target only the main frame
   const mainFrameId = await getMainFrameId(id);
-  console.log("[ClarityFilter] Targeting main frame:", mainFrameId);
+
 
   try {
     // First, try to ping the content script in the main frame
@@ -77,21 +76,18 @@ async function promptPin(reason) {
     );
 
     if (pingResp?.ok) {
-      // Content script is loaded in main frame, request PIN
-      console.log(
-        "[ClarityFilter] Content script loaded in main frame, requesting PIN..."
-      );
+      
       const resp = await sendMessageWithTimeout(
         id,
         { type: "cf_require_pin", reason },
         30000,
         mainFrameId
       );
-      console.log("[ClarityFilter] PIN response:", resp);
+
       return resp?.ok === true;
     } else {
       // Content script not loaded, inject it
-      console.log("[ClarityFilter] Injecting content script...");
+
       await chrome.scripting.executeScript({
         target: { tabId: id, frameIds: [mainFrameId] },
         files: ["content.js"],
@@ -100,19 +96,17 @@ async function promptPin(reason) {
       // Wait for content script to initialize
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // Now try PIN prompt in main frame
-      console.log("[ClarityFilter] Requesting PIN after injection...");
       const resp = await sendMessageWithTimeout(
         id,
         { type: "cf_require_pin", reason },
         30000,
         mainFrameId
       );
-      console.log("[ClarityFilter] PIN response after injection:", resp);
+
       return resp?.ok === true;
     }
   } catch (error) {
-    console.log("[ClarityFilter] PIN prompt error:", error);
+
     return false;
   }
 }
@@ -126,32 +120,30 @@ async function ensurePinAuthorized(reason, s) {
 let isProcessingCommand = false;
 
 // Service worker startup
-console.log("[ClarityFilter] ===== SERVICE WORKER STARTED =====");
+
 
 // Command handler
 chrome.commands.onCommand.addListener(async (command) => {
-  console.log("[ClarityFilter] ===== COMMAND RECEIVED =====");
-  console.log("[ClarityFilter] Command:", command);
-  console.log("[ClarityFilter] Time:", new Date().toISOString());
+
 
   if (command !== "toggle-filter") {
-    console.log("[ClarityFilter] Ignoring non-toggle command");
+   
     return;
   }
 
   if (isProcessingCommand) {
-    console.log("[ClarityFilter] Already processing command, ignoring");
+   
     return;
   }
 
   isProcessingCommand = true;
-  console.log("[ClarityFilter] Starting toggle process");
+  
 
   try {
     // Read current settings
     const all0 = await chrome.storage.sync.get(STORAGE_KEY);
     const current0 = normalize(all0[STORAGE_KEY] || {});
-    console.log("[ClarityFilter] Current settings:", current0);
+   
 
     // Check PIN authorization
     const reason = current0.enabled
@@ -159,12 +151,10 @@ chrome.commands.onCommand.addListener(async (command) => {
       : "turn filtering ON";
     const allowed = await ensurePinAuthorized(reason, current0);
     if (!allowed) {
-      console.log(
-        "[ClarityFilter] PIN authorization failed, cancelling toggle"
-      );
+      
       return;
     }
-    console.log("[ClarityFilter] PIN authorization successful");
+  
 
     // Re-read settings after PIN check
     const all1 = await chrome.storage.sync.get(STORAGE_KEY);
@@ -173,31 +163,31 @@ chrome.commands.onCommand.addListener(async (command) => {
     // Toggle the setting
     const next = { ...current1, enabled: !current1.enabled };
     await chrome.storage.sync.set({ [STORAGE_KEY]: next });
-    console.log("[ClarityFilter] Toggled enabled to:", next.enabled);
+   
 
     // Notify content script
     const id = await activeTabId();
     if (id) {
       try {
         await chrome.tabs.sendMessage(id, { type: "cf_rescan" });
-        console.log("[ClarityFilter] Notified content script");
+      
       } catch (error) {
-        console.log("[ClarityFilter] Could not notify content script:", error);
+       
       }
     } else {
-      console.log("[ClarityFilter] No active tab to notify");
+      
     }
   } catch (error) {
-    console.log("[ClarityFilter] Error in command handler:", error);
+  
   } finally {
     isProcessingCommand = false;
-    console.log("[ClarityFilter] Toggle process completed");
+  
   }
 });
 
 // Initialize default settings
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log("[ClarityFilter] Extension installed/updated");
+
 
   const all = await chrome.storage.sync.get(STORAGE_KEY);
   if (!all[STORAGE_KEY]) {
@@ -213,8 +203,8 @@ chrome.runtime.onInstalled.addListener(async () => {
         pinSalt: null,
       },
     });
-    console.log("[ClarityFilter] Initialized default settings");
+ 
   }
 });
 
-console.log("[ClarityFilter] Background script loaded successfully");
+

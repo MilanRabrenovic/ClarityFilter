@@ -3,7 +3,7 @@
 
 // Prevent multiple content script executions
 if (window.CF_CONTENT_SCRIPT_LOADED) {
-  console.log("[ClarityFilter] Content script already loaded, skipping...");
+
   // Exit early to prevent duplicate execution
   throw new Error("Content script already loaded");
 }
@@ -451,7 +451,7 @@ document.addEventListener("keydown", async (e) => {
 
 // Consolidated message listener for all content script messages
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  console.log("[ClarityFilter] Content script received message:", msg?.type);
+
 
   // Handle ping to check if content script is loaded
   if (msg?.type === "cf_ping") {
@@ -462,14 +462,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "cf_require_pin") {
     // Only handle PIN prompts in the main frame (top-level window)
     if (window !== window.top) {
-      console.log("[ClarityFilter] PIN prompt ignored - not in main frame");
+  
       sendResponse({ ok: false });
       return true;
     }
 
     // Prevent multiple PIN prompts from being handled simultaneously
     if (window.CF_PIN_PROMPT_ACTIVE) {
-      console.log("[ClarityFilter] PIN prompt already active, ignoring");
+   
       sendResponse({ ok: false });
       return true;
     }
@@ -477,9 +477,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     window.CF_PIN_PROMPT_ACTIVE = true;
     (async () => {
       try {
-        console.log("[ClarityFilter] Handling PIN request:", msg.reason);
+      
         const ok = await requirePin(msg.reason || "change settings");
-        console.log("[ClarityFilter] PIN verification result:", ok);
+     
         sendResponse({ ok });
       } finally {
         window.CF_PIN_PROMPT_ACTIVE = false;
@@ -541,28 +541,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   // Handle rescan messages
   if (msg?.type === "cf_rescan") {
-    console.log("[ClarityFilter] Content script received cf_rescan:", msg);
+
     (async () => {
       // Prefer authoritative settings from background if present
       if (msg.next && typeof msg.next === "object") {
-        console.log(
-          "[ClarityFilter] Using authoritative settings from background"
-        );
+      
         settings = normalize(msg.next);
       } else {
-        console.log(
-          "[ClarityFilter] Re-reading settings from storage (fallback)"
-        );
+       
         // Fallback: re-read from storage to avoid stale settings
         const all = await chrome.storage.sync.get(STORAGE_KEY);
         const s = all[STORAGE_KEY] || {};
         settings = normalize(s);
       }
 
-      console.log(
-        "[ClarityFilter] Current settings.enabled:",
-        settings.enabled
-      );
+  
 
       // Recompute regex and apply/clear deterministically
       nameRegex = buildRegex(settings.names);
@@ -580,11 +573,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (settings.enabled) {
         applyEffects();
         const count = scan();
-        console.log("[ClarityFilter] Scan completed, count:", count);
+   
         sendResponse({ ok: true, enabled: true, count });
       } else {
         clearEffects();
-        console.log("[ClarityFilter] Effects cleared - filtering disabled");
+    
         sendResponse({ ok: true, enabled: false });
       }
     })();
