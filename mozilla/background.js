@@ -34,29 +34,81 @@ async function activeTabId() {
   return tabs[0]?.id ?? null;
 }
 
-// Ask the content script to handle the PIN prompt (nice UI path)
-async function verifyViaContentScript(reason) {
-  try {
-    const id = await activeTabId();
-    if (!id) return null; // no active tab
-    const resp = await api.tabs.sendMessage(id, {
-      type: "cf_require_pin",
-      reason,
-    });
-    if (resp && typeof resp.ok === "boolean") return resp.ok;
-    return null;
-  } catch {
-    return null; // no content script on this page, or message failed
+function sendMessageWithTimeout(tabId, msg, ms = 20000) {
+  return new Promise((resolve) => {
+    let done = false;
+    const t = setTimeout(() => {
+      if (!done) resolve(null);
+    }, ms);
+    try {
+      api.tabs.sendMessage(tabId, msg, (resp) => {
+        done = true;
+        clearTimeout(t);
+        if (api.runtime.lastError) return resolve(null);
+        resolve(resp ?? null);
+      });
+    } catch {
+      done = true;
+      clearTimeout(t);
+      resolve(null);
+    }
+  });
+}
+
+async function promptPin(reason) {
+  // Try content-script path first (best UX)
+  const id = await activeTabId();
+  if (id) {
+    const resp = await sendMessageWithTimeout(
+      id,
+      { type: "cf_require_pin", reason },
+      60_000
+    );
+    if (resp?.ok === true) return true;
   }
+
+  // Fallback: inject content script to use custom PIN modal
+  if (id) {
+    try {
+      // Inject content script if not already present
+      await api.tabs.executeScript(id, {
+        file: "content.js",
+      });
+
+      // Now try the PIN prompt again
+      const resp = await sendMessageWithTimeout(
+        id,
+        { type: "cf_require_pin", reason },
+        60_000
+      );
+      if (resp?.ok === true) return true;
+    } catch (error) {
+      console.log("[ClarityFilter] Could not inject content script:", error);
+    }
+  }
+
+  // Final fallback: open popup (for chrome:// pages or other edge cases)
+  try {
+    await api.action.openPopup();
+  } catch {}
+
+  const resp2 = await new Promise((resolve) => {
+    let done = false;
+    const t = setTimeout(() => {
+      if (!done) resolve(null);
+    }, 60_000);
+    api.runtime.sendMessage({ type: "cf_require_pin_popup", reason }, (r) => {
+      done = true;
+      clearTimeout(t);
+      resolve(r);
+    });
+  });
+  return resp2?.ok === true;
 }
 
 async function ensurePinAuthorized(reason, s) {
   if (!s.pinEnabled || !s.pinHash || !s.pinSalt) return true; // no PIN set
-
-  // Only ask via content script; do NOT inject prompt into the page/iframes.
-  const ok = await verifyViaContentScript(reason);
-  // ok can be true/false/null; we only proceed when explicitly true
-  return ok === true;
+  return promptPin(reason);
 }
 
 // Debug: prove background loaded

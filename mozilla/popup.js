@@ -626,6 +626,17 @@ cfEnabled.addEventListener("change", async () => {
   await save();
 });
 
+// ---------- Message listener for PIN fallback ----------
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "cf_require_pin_popup") {
+    // Handle PIN prompt from background script fallback
+    verifyPinInput().then((ok) => {
+      sendResponse({ ok });
+    });
+    return true; // Keep message channel open for async response
+  }
+});
+
 // ---------- Init ----------
 document.addEventListener("DOMContentLoaded", () => {
   load();

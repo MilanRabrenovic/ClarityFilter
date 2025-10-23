@@ -9,6 +9,11 @@ let settings = {
   enabled: true,
   whitelist: [],
   pixelCell: 15,
+  pinEnabled: false,
+  pinHash: null,
+  pinSalt: null,
+  pinAlgo: null,
+  pinIter: null,
 };
 let nameRegex = null;
 let observer = null;
@@ -346,6 +351,28 @@ async function sha256Hex(str) {
     .join("");
 }
 
+async function pbkdf2Hex(pin, saltHex, iter = 150000) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const salt = Uint8Array.from(
+    saltHex.match(/../g).map((h) => parseInt(h, 16))
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", iterations: iter, salt },
+    key,
+    256
+  );
+  return [...new Uint8Array(bits)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function getSettings() {
   const all = await chrome.storage.sync.get(STORAGE_KEY);
   const s = all[STORAGE_KEY] || {};
@@ -354,6 +381,8 @@ async function getSettings() {
     pinEnabled: !!s.pinEnabled,
     pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+    pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
+    pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
   };
 }
 
@@ -363,9 +392,18 @@ async function requirePin(reason = "change settings") {
 
   const input = await cfPinPrompt(reason);
   if (input == null) return false;
+
   try {
-    const hash = await sha256Hex(`${s.pinSalt}:${input}`);
-    return hash === s.pinHash;
+    // Use the same verification logic as other places
+    if (s.pinAlgo === "PBKDF2") {
+      // New PBKDF2 format
+      const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
+      return hash === s.pinHash;
+    } else {
+      // Legacy SHA-256 format
+      const hash = await sha256Hex(`${s.pinSalt}:${input}`);
+      return hash === s.pinHash;
+    }
   } catch {
     return false;
   }
@@ -390,25 +428,41 @@ document.addEventListener("keydown", async (e) => {
   if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
     e.preventDefault();
 
-    if (
-      !(await requirePin(
-        settings.enabled ? "turn filtering OFF" : "turn filtering ON"
-      ))
-    ) {
-      // wrong/cancelled PIN -> do nothing
+    // Rate limiting check
+    const now = Date.now();
+    if (now - lastToggleTime < TOGGLE_COOLDOWN) {
       return;
     }
+    lastToggleTime = now;
 
-    // flip enabled in storage (content script should NOT directly mutate local `settings`
-    // without writing to storage; storage.onChanged will re-sync and rescan)
     try {
+      // Get current settings from storage
       const all = await chrome.storage.sync.get(STORAGE_KEY);
-      const prev = all[STORAGE_KEY] || {};
+      const current = all[STORAGE_KEY] || {};
+
+      // Verify PIN if enabled
+      if (current.pinEnabled) {
+        const ok = await requirePin(
+          current.enabled ? "turn filtering OFF" : "turn filtering ON"
+        );
+        if (!ok) {
+          return; // PIN verification failed
+        }
+      }
+
+      // Toggle the enabled state
+      const newEnabled = !current.enabled;
       await chrome.storage.sync.set({
-        [STORAGE_KEY]: { ...prev, enabled: !prev.enabled },
+        [STORAGE_KEY]: { ...current, enabled: newEnabled },
       });
-    } catch {
-      /* ignore */
+
+      // Update local settings immediately
+      settings.enabled = newEnabled;
+
+      // Trigger rescan
+      scan();
+    } catch (error) {
+      console.error("[ClarityFilter] Keyboard toggle error:", error);
     }
   }
 });
@@ -1178,6 +1232,11 @@ function loadSettingsAndInit() {
         enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
         whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
         pixelCell: Number.isFinite(saved.pixelCell) ? saved.pixelCell : 15,
+        pinEnabled: !!saved.pinEnabled,
+        pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
+        pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
+        pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
+        pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -1216,6 +1275,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
       newVal.pixelCell <= 50
         ? newVal.pixelCell
         : 15,
+    pinEnabled: !!newVal.pinEnabled,
+    pinHash: typeof newVal.pinHash === "string" ? newVal.pinHash : null,
+    pinSalt: typeof newVal.pinSalt === "string" ? newVal.pinSalt : null,
+    pinAlgo: typeof newVal.pinAlgo === "string" ? newVal.pinAlgo : null,
+    pinIter: Number.isFinite(newVal.pinIter) ? newVal.pinIter : null,
   };
 
   // Security: Limit total names count

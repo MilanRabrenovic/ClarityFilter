@@ -4,16 +4,19 @@
   "short_name": "ClarityFilter",
   "version": "0.3.10",
   "description": "Hide or blur articles that mention names you choose.",
-
-  "permissions": ["storage", "tabs", "scripting"],
-  "host_permissions": ["<all_urls>"],
-
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "options_page": "options.html",
-
   "background": {
     "service_worker": "background.js"
   },
-
   "commands": {
     "toggle-filter": {
       "suggested_key": {
@@ -23,7 +26,6 @@
       "description": "Toggle ClarityFilter on/off"
     }
   },
-
   "action": {
     "default_popup": "popup.html",
     "default_title": "ClarityFilter",
@@ -33,7 +35,6 @@
       "48": "icon-48.png"
     }
   },
-
   "icons": {
     "16": "icon-16.png",
     "32": "icon-32.png",
@@ -43,11 +44,15 @@
     "256": "icon-256.png",
     "512": "icon-512.png"
   },
-
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }

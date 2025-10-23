@@ -1,14 +1,43 @@
 // ClarityFilter - content script (Manifest V2)
 // ------------------------------------------------
 
+// Prevent multiple content script executions
+if (window.CF_CONTENT_SCRIPT_LOADED) {
+  console.log("[ClarityFilter] Content script already loaded, skipping...");
+  // Exit early to prevent duplicate execution
+  throw new Error("Content script already loaded");
+}
+window.CF_CONTENT_SCRIPT_LOADED = true;
+
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
+
+function normalize(s = {}) {
+  return {
+    names: Array.isArray(s.names) ? s.names : [],
+    mode: typeof s.mode === "string" ? s.mode : "hide",
+    enabled: typeof s.enabled === "boolean" ? s.enabled : true,
+    whitelist: Array.isArray(s.whitelist) ? s.whitelist : [],
+    pixelCell: Number.isFinite(s.pixelCell) ? s.pixelCell : 15,
+    pinEnabled: !!s.pinEnabled,
+    pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
+    pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+    pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
+    pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
+  };
+}
+
 let settings = {
   names: [],
   mode: "hide",
   enabled: true,
   whitelist: [],
   pixelCell: 15,
+  pinEnabled: false,
+  pinHash: null,
+  pinSalt: null,
+  pinAlgo: null,
+  pinIter: null,
 };
 let nameRegex = null;
 let observer = null;
@@ -346,6 +375,28 @@ async function sha256Hex(str) {
     .join("");
 }
 
+async function pbkdf2Hex(pin, saltHex, iter = 150000) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const salt = Uint8Array.from(
+    saltHex.match(/../g).map((h) => parseInt(h, 16))
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", iterations: iter, salt },
+    key,
+    256
+  );
+  return [...new Uint8Array(bits)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 async function getSettings() {
   const all = await chrome.storage.sync.get(STORAGE_KEY);
   const s = all[STORAGE_KEY] || {};
@@ -354,6 +405,8 @@ async function getSettings() {
     pinEnabled: !!s.pinEnabled,
     pinHash: typeof s.pinHash === "string" ? s.pinHash : null,
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
+    pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
+    pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
   };
 }
 
@@ -363,9 +416,18 @@ async function requirePin(reason = "change settings") {
 
   const input = await cfPinPrompt(reason);
   if (input == null) return false;
+
   try {
-    const hash = await sha256Hex(`${s.pinSalt}:${input}`);
-    return hash === s.pinHash;
+    // Use the same verification logic as other places
+    if (s.pinAlgo === "PBKDF2") {
+      // New PBKDF2 format
+      const hash = await pbkdf2Hex(input, s.pinSalt, s.pinIter || 150000);
+      return hash === s.pinHash;
+    } else {
+      // Legacy SHA-256 format
+      const hash = await sha256Hex(`${s.pinSalt}:${input}`);
+      return hash === s.pinHash;
+    }
   } catch {
     return false;
   }
@@ -385,40 +447,43 @@ document.addEventListener("keydown", async (e) => {
   const tag = (t && t.tagName) || "";
   const typing = tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable;
   if (typing) return;
-
-  // Alt+Shift+F (no Ctrl/Cmd)
-  if (e.altKey && e.shiftKey && e.code === "KeyF" && !e.ctrlKey && !e.metaKey) {
-    e.preventDefault();
-
-    if (
-      !(await requirePin(
-        settings.enabled ? "turn filtering OFF" : "turn filtering ON"
-      ))
-    ) {
-      // wrong/cancelled PIN -> do nothing
-      return;
-    }
-
-    // flip enabled in storage (content script should NOT directly mutate local `settings`
-    // without writing to storage; storage.onChanged will re-sync and rescan)
-    try {
-      const all = await chrome.storage.sync.get(STORAGE_KEY);
-      const prev = all[STORAGE_KEY] || {};
-      await chrome.storage.sync.set({
-        [STORAGE_KEY]: { ...prev, enabled: !prev.enabled },
-      });
-    } catch {
-      /* ignore */
-    }
-  }
 });
 
-// Let popup/options ask us to verify a PIN when needed.
+// Consolidated message listener for all content script messages
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  console.log("[ClarityFilter] Content script received message:", msg?.type);
+
+  // Handle ping to check if content script is loaded
+  if (msg?.type === "cf_ping") {
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (msg?.type === "cf_require_pin") {
+    // Only handle PIN prompts in the main frame (top-level window)
+    if (window !== window.top) {
+      console.log("[ClarityFilter] PIN prompt ignored - not in main frame");
+      sendResponse({ ok: false });
+      return true;
+    }
+
+    // Prevent multiple PIN prompts from being handled simultaneously
+    if (window.CF_PIN_PROMPT_ACTIVE) {
+      console.log("[ClarityFilter] PIN prompt already active, ignoring");
+      sendResponse({ ok: false });
+      return true;
+    }
+
+    window.CF_PIN_PROMPT_ACTIVE = true;
     (async () => {
-      const ok = await requirePin(msg.reason || "change settings");
-      sendResponse({ ok });
+      try {
+        console.log("[ClarityFilter] Handling PIN request:", msg.reason);
+        const ok = await requirePin(msg.reason || "change settings");
+        console.log("[ClarityFilter] PIN verification result:", ok);
+        sendResponse({ ok });
+      } finally {
+        window.CF_PIN_PROMPT_ACTIVE = false;
+      }
     })();
     return true; // keep port open
   }
@@ -472,6 +537,58 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
     })();
     return true; // keep port open
+  }
+
+  // Handle rescan messages
+  if (msg?.type === "cf_rescan") {
+    console.log("[ClarityFilter] Content script received cf_rescan:", msg);
+    (async () => {
+      // Prefer authoritative settings from background if present
+      if (msg.next && typeof msg.next === "object") {
+        console.log(
+          "[ClarityFilter] Using authoritative settings from background"
+        );
+        settings = normalize(msg.next);
+      } else {
+        console.log(
+          "[ClarityFilter] Re-reading settings from storage (fallback)"
+        );
+        // Fallback: re-read from storage to avoid stale settings
+        const all = await chrome.storage.sync.get(STORAGE_KEY);
+        const s = all[STORAGE_KEY] || {};
+        settings = normalize(s);
+      }
+
+      console.log(
+        "[ClarityFilter] Current settings.enabled:",
+        settings.enabled
+      );
+
+      // Recompute regex and apply/clear deterministically
+      nameRegex = buildRegex(settings.names);
+
+      if (isWhitelisted(location.href, settings.whitelist)) {
+        clearEffects();
+        sendResponse({
+          ok: true,
+          enabled: settings.enabled,
+          whitelisted: true,
+        });
+        return;
+      }
+
+      if (settings.enabled) {
+        applyEffects();
+        const count = scan();
+        console.log("[ClarityFilter] Scan completed, count:", count);
+        sendResponse({ ok: true, enabled: true, count });
+      } else {
+        clearEffects();
+        console.log("[ClarityFilter] Effects cleared - filtering disabled");
+        sendResponse({ ok: true, enabled: false });
+      }
+    })();
+    return true; // keep port open for async response
   }
 });
 
@@ -925,6 +1042,11 @@ function clearEffects() {
   removeOverlays(document); // NEW
 }
 
+function applyEffects() {
+  // Ensure CSS styles are injected
+  ensureStyle();
+}
+
 function clampToReasonable(container, anchorEl) {
   if (!container) return container;
   const r = container.getBoundingClientRect?.();
@@ -1144,22 +1266,6 @@ function startObserver() {
   });
 }
 
-// Message from popup: rescan & report count
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === "cf_rescan") {
-    const count = scan();
-    sendResponse({
-      count,
-      regex: nameRegex ? nameRegex.toString() : null,
-      mode: settings.mode,
-      enabled: settings.enabled,
-      whitelisted: isWhitelisted(location.href, settings.whitelist),
-      host: location.hostname,
-    });
-    return true;
-  }
-});
-
 // Settings init & changes
 function loadSettingsAndInit() {
   // one-time legacy migration for overall object
@@ -1178,6 +1284,11 @@ function loadSettingsAndInit() {
         enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
         whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
         pixelCell: Number.isFinite(saved.pixelCell) ? saved.pixelCell : 15,
+        pinEnabled: !!saved.pinEnabled,
+        pinHash: typeof saved.pinHash === "string" ? saved.pinHash : null,
+        pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
+        pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
+        pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -1216,6 +1327,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
       newVal.pixelCell <= 50
         ? newVal.pixelCell
         : 15,
+    pinEnabled: !!newVal.pinEnabled,
+    pinHash: typeof newVal.pinHash === "string" ? newVal.pinHash : null,
+    pinSalt: typeof newVal.pinSalt === "string" ? newVal.pinSalt : null,
+    pinAlgo: typeof newVal.pinAlgo === "string" ? newVal.pinAlgo : null,
+    pinIter: Number.isFinite(newVal.pinIter) ? newVal.pinIter : null,
   };
 
   // Security: Limit total names count

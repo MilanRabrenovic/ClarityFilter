@@ -118,6 +118,32 @@ main {
   min-height: 20px;
   color: #111;
   font-size: 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: all 0.3s ease;
+  font-weight: 500;
+}
+
+.status.success {
+  background: #f0fdf4;
+  color: #166534;
+  border-color: #bbf7d0;
+  box-shadow: 0 1px 3px rgba(34, 197, 94, 0.1);
+}
+
+.status.error {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #fecaca;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.1);
+}
+
+.status.info {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  box-shadow: 0 1px 3px rgba(59, 130, 246, 0.1);
 }
 
 .primary {

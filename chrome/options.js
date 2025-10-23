@@ -130,9 +130,24 @@ async function verifyPinAgainstState(pin, s) {
   }
 }
 
-function status(msg) {
+function status(msg, type = "info") {
+  // Remove any existing status classes
+  statusEl.className = "status";
+
+  // Add the appropriate class based on type
+  if (type === "success") {
+    statusEl.classList.add("success");
+  } else if (type === "error") {
+    statusEl.classList.add("error");
+  } else {
+    statusEl.classList.add("info");
+  }
+
   statusEl.textContent = msg;
-  setTimeout(() => (statusEl.textContent = ""), 1200);
+  setTimeout(() => {
+    statusEl.textContent = "";
+    statusEl.className = "status";
+  }, 2000); // Increased timeout for better visibility
 }
 
 // ---- load UI ----
@@ -164,10 +179,10 @@ async function load() {
         : "No PIN set.";
     }
 
-    status("Loaded");
+    status("Loaded", "success");
   } catch (err) {
     console.error("Options load failed:", err);
-    status("Load failed");
+    status("Load failed", "error");
   }
 }
 
@@ -192,7 +207,7 @@ async function saveGeneralOnly() {
     const next = { ...prev, ...partial };
 
     await setSync({ [STORAGE_KEY]: next });
-    status("Saved");
+    status("Saved", "success");
 
     // ping active tab so content script can rescan
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -208,7 +223,7 @@ async function saveGeneralOnly() {
     });
   } catch (err) {
     console.error("Options save failed:", err);
-    status("Save failed");
+    status("Save failed", "error");
   }
 }
 
@@ -234,19 +249,19 @@ async function enablePinFlow() {
     }
 
     if (!ok) {
-      status("Wrong PIN");
+      status("Wrong PIN", "error");
       return false;
     }
   } else {
     // No PIN yet -> set a new one (and enable)
     const p1 = prompt("Set new PIN (4–32 chars):");
     if (p1 == null || !validPinFormat(p1)) {
-      status("Canceled");
+      status("Canceled", "info");
       return false;
     }
     const p2 = prompt("Confirm new PIN:");
     if (p2 == null || p1 !== p2) {
-      status("PINs didn’t match");
+      status("PINs didn't match", "error");
       return false;
     }
     const salt = randomHex(16);
@@ -259,7 +274,7 @@ async function enablePinFlow() {
 
   s.pinEnabled = true;
   await setSync({ [STORAGE_KEY]: s });
-  status("PIN protection enabled");
+  status("PIN protection enabled", "success");
   await load();
   return true;
 }
@@ -272,7 +287,7 @@ async function disablePinFlow() {
   if (!hasPin(s)) {
     s.pinEnabled = false;
     await setSync({ [STORAGE_KEY]: s });
-    status("PIN protection disabled");
+    status("PIN protection disabled", "success");
     await load();
     return true;
   }
@@ -299,7 +314,7 @@ async function disablePinFlow() {
 
   s.pinEnabled = false;
   await setSync({ [STORAGE_KEY]: s });
-  status("PIN protection disabled");
+  status("PIN protection disabled", "success");
   await load();
   return true;
 }
@@ -325,7 +340,7 @@ async function setOrChangePinFlow() {
     }
 
     if (!ok) {
-      status("Wrong PIN");
+      status("Wrong PIN", "error");
       return;
     }
   }
@@ -347,7 +362,7 @@ async function setOrChangePinFlow() {
   s.pinIter = 150000;
 
   await setSync({ [STORAGE_KEY]: s });
-  status(hasPin(s) ? "PIN updated" : "PIN set");
+  status(hasPin(s) ? "PIN updated" : "PIN set", "success");
   await load();
 }
 
@@ -458,10 +473,10 @@ async function exportSettings() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    status("Settings exported successfully");
+    status("Settings exported successfully", "success");
   } catch (err) {
     console.error("Export failed:", err);
-    status("Export failed");
+    status("Export failed", "error");
   }
 }
 
@@ -473,7 +488,7 @@ async function importSettings() {
   try {
     // Rate limiting check
     if (Date.now() - lastImportTime < IMPORT_COOLDOWN) {
-      status("Please wait before importing again");
+      status("Please wait before importing again", "error");
       return;
     }
 
@@ -488,7 +503,7 @@ async function importSettings() {
 
       // File size limit (1MB)
       if (file.size > 1024 * 1024) {
-        status("File too large (max 1MB)");
+        status("File too large (max 1MB)", "error");
         return;
       }
 
@@ -500,13 +515,13 @@ async function importSettings() {
         try {
           importData = JSON.parse(text);
         } catch (parseError) {
-          status("Invalid JSON file");
+          status("Invalid JSON file", "error");
           return;
         }
 
         // Comprehensive validation
         if (!validateImportData(importData)) {
-          status("Invalid file format or content");
+          status("Invalid file format or content", "error");
           return;
         }
 
@@ -521,7 +536,7 @@ async function importSettings() {
         const whitelistCount = sanitizedWhitelist.length;
 
         if (termCount === 0 && whitelistCount === 0) {
-          status("No valid data to import");
+          status("No valid data to import", "error");
           return;
         }
 
@@ -563,7 +578,8 @@ async function importSettings() {
         const newSitesCount = mergedWhitelist.length - current.whitelist.length;
 
         status(
-          `Added ${newTermsCount} new terms and ${newSitesCount} new sites`
+          `Added ${newTermsCount} new terms and ${newSitesCount} new sites`,
+          "success"
         );
 
         // Reload UI
@@ -583,14 +599,14 @@ async function importSettings() {
         });
       } catch (err) {
         console.error("Import failed:", err);
-        status("Import failed - invalid file");
+        status("Import failed - invalid file", "error");
       }
     };
 
     input.click();
   } catch (err) {
     console.error("Import setup failed:", err);
-    status("Import failed");
+    status("Import failed", "error");
   }
 }
 
