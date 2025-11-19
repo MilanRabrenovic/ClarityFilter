@@ -23,9 +23,6 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 const enabledEl = $("#enabled");
-const pixelRowEl = $("#pixelRow");
-const pixelCellEl = $("#pixelCell");
-const pixelCellVal = $("#pixelCellVal");
 const saveBtn = $("#save");
 const statusEl = $("#status");
 const openPopupBtn = $("#openPopup");
@@ -54,7 +51,7 @@ function normalize(saved = {}) {
     mode: saved.mode || "hide",
     enabled: typeof saved.enabled === "boolean" ? saved.enabled : true,
     whitelist: Array.isArray(saved.whitelist) ? saved.whitelist : [],
-    pixelCell: Number.isFinite(saved.pixelCell) ? saved.pixelCell : 15,
+    pixelCell: 15,
 
     // NEW
     pinEnabled: !!saved.pinEnabled,
@@ -157,11 +154,6 @@ async function load() {
     const radios = $$('input[name="mode"]');
     radios.forEach((r) => (r.checked = r.value === s.mode));
 
-    // pixel
-    pixelRowEl.style.display = s.mode === "pixelate" ? "" : "none";
-    pixelCellEl.value = s.pixelCell;
-    pixelCellVal.textContent = `${s.pixelCell}px`;
-
     // enabled
     if (enabledEl) enabledEl.checked = !!s.enabled;
 
@@ -189,11 +181,10 @@ async function load() {
 function collectGeneral() {
   const picked =
     $$('input[name="mode"]').find((r) => r.checked)?.value || "hide";
-  const cell = parseInt(pixelCellEl.value, 10);
   return {
     mode: picked,
     enabled: enabledEl?.checked ?? true,
-    pixelCell: Number.isFinite(cell) ? cell : 15,
+    pixelCell: 15,
   };
 }
 
@@ -666,17 +657,6 @@ async function importSettings() {
 
 // ---- wire UI ----
 document.addEventListener("DOMContentLoaded", load);
-
-document.addEventListener("change", (e) => {
-  if (e.target?.name === "mode") {
-    const val = e.target.value;
-    pixelRowEl.style.display = val === "pixelate" ? "" : "none";
-  }
-});
-
-pixelCellEl?.addEventListener("input", () => {
-  pixelCellVal.textContent = `${pixelCellEl.value}px`;
-});
 
 saveBtn?.addEventListener("click", saveGeneralOnly);
 
