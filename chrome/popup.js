@@ -36,6 +36,7 @@ let state = {
   pinEnabled: false,
   pinHash: null,
   pinSalt: null,
+  blockedImages: [],
 };
 
 // ---------- Virtualization ----------
@@ -164,6 +165,11 @@ function normalize(saved) {
     pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
     pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
     pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
+    blockedImages: Array.isArray(saved.blockedImages)
+      ? saved.blockedImages
+          .filter((u) => typeof u === "string" && u.length <= 500)
+          .slice(0, 500)
+      : [],
   };
 }
 

@@ -39,6 +39,13 @@ const pinHintEl = $("#pinHint");
 const exportBtn = $("#exportBtn");
 const importBtn = $("#importBtn");
 
+const blockedImagesList = $("#blockedImagesList");
+const blockedImagesCount = $("#blockedImagesCount");
+const blockedImagesEmpty = $("#blockedImagesEmpty");
+const blockedImagesClearBtn = $("#blockedImagesClearBtn");
+
+let currentSettings = null;
+
 // ---- utils ----
 function normalize(saved = {}) {
   return {
@@ -54,6 +61,11 @@ function normalize(saved = {}) {
     pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
     pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
     pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
+    blockedImages: Array.isArray(saved.blockedImages)
+      ? saved.blockedImages
+          .filter((u) => typeof u === "string" && u.length <= 500)
+          .slice(0, 500)
+      : [],
   };
 }
 
@@ -138,6 +150,7 @@ async function load() {
   try {
     const all = await getSync([STORAGE_KEY]);
     const s = normalize(all[STORAGE_KEY]);
+    currentSettings = s;
 
     // radios
     const radios = $$('input[name="mode"]');
@@ -161,6 +174,8 @@ async function load() {
           : "PIN set (protection currently off)."
         : "No PIN set.";
     }
+
+    renderBlockedImages(s.blockedImages);
 
     status("Loaded", "success");
   } catch (err) {
@@ -366,6 +381,15 @@ function validateImportData(data) {
     }
   }
 
+  if (data.data.blockedImages) {
+    if (!Array.isArray(data.data.blockedImages)) return false;
+    if (data.data.blockedImages.length > 500) return false;
+    for (const url of data.data.blockedImages) {
+      if (typeof url !== "string") return false;
+      if (url.length > 500) return false;
+    }
+  }
+
   // Allow additional fields like mode, pixelCell, etc. (they'll be ignored during import)
   return true;
 }
@@ -395,6 +419,68 @@ function sanitizeWhitelist(whitelist) {
     .slice(0, 1000); // Limit total count
 }
 
+function sanitizeBlockedImages(images) {
+  return images
+    .filter((url) => typeof url === "string")
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0 && url.length <= 500)
+    .slice(-500);
+}
+
+function renderBlockedImages(images = []) {
+  if (!blockedImagesList) return;
+  blockedImagesList.innerHTML = "";
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (blockedImagesEmpty) {
+    blockedImagesEmpty.style.display = hasImages ? "none" : "block";
+  }
+  if (blockedImagesCount) {
+    blockedImagesCount.textContent = hasImages
+      ? `${images.length} image${images.length === 1 ? "" : "s"}`
+      : "";
+  }
+  if (!hasImages) return;
+
+  images.forEach((url, idx) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = url.length > 90 ? `${url.slice(0, 90)}…` : url;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.index = String(idx);
+    btn.textContent = "Unblock";
+    li.append(span, btn);
+    blockedImagesList.appendChild(li);
+  });
+}
+
+async function mutateBlockedImages(mutator, successMsg) {
+  const all = await getSync([STORAGE_KEY]);
+  const s = normalize(all[STORAGE_KEY]);
+  const nextImages = mutator([...s.blockedImages]);
+  if (nextImages == null) return;
+  const next = { ...s, blockedImages: nextImages.slice(-500) };
+  await setSync({ [STORAGE_KEY]: next });
+  currentSettings = next;
+  renderBlockedImages(next.blockedImages);
+  status(successMsg, "success");
+}
+
+async function removeBlockedImageByIndex(idx) {
+  await mutateBlockedImages((images) => {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= images.length) return null;
+    images.splice(idx, 1);
+    return images;
+  }, "Image removed");
+}
+
+async function clearBlockedImages() {
+  await mutateBlockedImages((images) => {
+    if (!images.length) return null;
+    return [];
+  }, "Blocked images cleared");
+}
+
 // ---- Export/Import functions ----
 async function exportSettings() {
   try {
@@ -411,6 +497,7 @@ async function exportSettings() {
         whitelist: s.whitelist,
         mode: s.mode,
         pixelCell: s.pixelCell,
+        blockedImages: s.blockedImages,
         // Note: We don't export PIN data for security reasons
       },
     };
@@ -488,19 +575,23 @@ async function importSettings() {
         const sanitizedWhitelist = sanitizeWhitelist(
           importData.data.whitelist || []
         );
+        const sanitizedBlockedImages = sanitizeBlockedImages(
+          importData.data.blockedImages || []
+        );
 
         // Confirm import with sanitized counts
         const termCount = sanitizedNames.length;
         const whitelistCount = sanitizedWhitelist.length;
+        const imageCount = sanitizedBlockedImages.length;
 
-        if (termCount === 0 && whitelistCount === 0) {
+        if (termCount === 0 && whitelistCount === 0 && imageCount === 0) {
           status("No valid data to import", "error");
           return;
         }
 
         if (
           !confirm(
-            `Import ${termCount} terms and ${whitelistCount} whitelist sites?\n\nThis will ADD to your current settings (existing terms will remain).`
+            `Import ${termCount} terms, ${whitelistCount} whitelist sites, and ${imageCount} blocked images?\n\nThis will ADD to your current settings (existing items remain).`
           )
         ) {
           return;
@@ -519,10 +610,15 @@ async function importSettings() {
           ...new Set([...current.whitelist, ...sanitizedWhitelist]),
         ];
 
+        const mergedBlockedImages = [
+          ...new Set([...current.blockedImages, ...sanitizedBlockedImages]),
+        ].slice(-500);
+
         const merged = {
           ...current,
           names: mergedNames,
           whitelist: mergedWhitelist,
+          blockedImages: mergedBlockedImages,
           // Keep current mode and pixelCell settings - don't override user preferences
           mode: current.mode,
           pixelCell: current.pixelCell,
@@ -534,9 +630,11 @@ async function importSettings() {
         // Calculate how many new items were actually added
         const newTermsCount = mergedNames.length - current.names.length;
         const newSitesCount = mergedWhitelist.length - current.whitelist.length;
+        const newImageCount =
+          mergedBlockedImages.length - current.blockedImages.length;
 
         status(
-          `Added ${newTermsCount} new terms and ${newSitesCount} new sites`,
+          `Added ${newTermsCount} new terms, ${newSitesCount} new sites, ${newImageCount} blocked images`,
           "success"
         );
 
@@ -608,6 +706,24 @@ setPinBtn?.addEventListener("click", setOrChangePinFlow);
 
 exportBtn?.addEventListener("click", exportSettings);
 importBtn?.addEventListener("click", importSettings);
+
+blockedImagesList?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-index]");
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.index, 10);
+  if (Number.isNaN(idx)) return;
+  removeBlockedImageByIndex(idx);
+});
+
+blockedImagesClearBtn?.addEventListener("click", () => {
+  if (
+    !confirm(
+      "Remove all blocked images? This cannot be undone unless you re-import a backup."
+    )
+  )
+    return;
+  clearBlockedImages();
+});
 
 // reflect external changes
 api.storage.onChanged.addListener((changes, area) => {

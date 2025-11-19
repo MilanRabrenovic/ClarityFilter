@@ -1,6 +1,17 @@
 // background.js (Chrome MV3) - Minimal Working Implementation
 const api = typeof browser !== "undefined" ? browser : chrome;
 const STORAGE_KEY = "cf_settings";
+const MENU_BLOCK_SELECTION = "cf_block_selection";
+const MENU_BLOCK_IMAGE = "cf_block_image";
+
+function canonicalImageUrl(u) {
+  if (!u) return null;
+  try {
+    return new URL(u).href;
+  } catch {
+    return String(u);
+  }
+}
 
 function normalize(s = {}) {
   return {
@@ -14,6 +25,11 @@ function normalize(s = {}) {
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
     pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
     pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
+    blockedImages: Array.isArray(s.blockedImages)
+      ? s.blockedImages
+          .filter((u) => typeof u === "string" && u.length <= 500)
+          .slice(0, 500)
+      : [],
   };
 }
 
@@ -117,7 +133,7 @@ api.commands.onCommand.addListener(async (command) => {
 
 // Initialize default settings
 api.runtime.onInstalled.addListener(async () => {
-    const all = await api.storage.sync.get(STORAGE_KEY);
+  const all = await api.storage.sync.get(STORAGE_KEY);
   if (!all[STORAGE_KEY]) {
     await api.storage.sync.set({
       [STORAGE_KEY]: {
@@ -131,7 +147,81 @@ api.runtime.onInstalled.addListener(async () => {
         pinSalt: null,
         pinAlgo: "PBKDF2",
         pinIter: 150000,
+        blockedImages: [],
       },
     });
   }
+  setupContextMenus();
 });
+
+function setupContextMenus() {
+  if (!api.contextMenus?.create) return;
+  try {
+    api.contextMenus.removeAll(() => {
+      api.contextMenus.create({
+        id: MENU_BLOCK_SELECTION,
+        title: "Block this term",
+        contexts: ["selection"],
+      });
+      api.contextMenus.create({
+        id: MENU_BLOCK_IMAGE,
+        title: "Block this image",
+        contexts: ["image"],
+      });
+    });
+  } catch {
+    // ignore
+  }
+}
+
+if (api.runtime?.onStartup?.addListener) {
+  api.runtime.onStartup.addListener(setupContextMenus);
+}
+
+api.contextMenus?.onClicked?.addListener(async (info, tab) => {
+  if (info.menuItemId === MENU_BLOCK_SELECTION) {
+    const raw = (info.selectionText || "").trim();
+    if (!raw || raw.length > 100) return;
+    await addBlockedTerm(raw, tab);
+    return;
+  }
+  if (info.menuItemId === MENU_BLOCK_IMAGE) {
+    const src = (info.srcUrl || "").trim();
+    if (!src) return;
+    await addBlockedImage(src, tab);
+  }
+});
+
+async function addBlockedTerm(term, tab) {
+  try {
+    const all = await api.storage.sync.get(STORAGE_KEY);
+    const current = normalize(all[STORAGE_KEY]);
+    if (current.names.includes(term)) return;
+    const next = { ...current, names: [...current.names, term] };
+    await api.storage.sync.set({ [STORAGE_KEY]: next });
+    await notifyTabRescan(tab, next);
+  } catch {}
+}
+
+async function addBlockedImage(src, tab) {
+  const normalizedSrc = canonicalImageUrl(src);
+  if (!normalizedSrc) return;
+  try {
+    const all = await api.storage.sync.get(STORAGE_KEY);
+    const current = normalize(all[STORAGE_KEY]);
+    if (current.blockedImages.includes(normalizedSrc)) return;
+    const next = {
+      ...current,
+      blockedImages: [...current.blockedImages, normalizedSrc].slice(-500),
+    };
+    await api.storage.sync.set({ [STORAGE_KEY]: next });
+    await notifyTabRescan(tab, next);
+  } catch {}
+}
+
+async function notifyTabRescan(tab, next) {
+  if (!tab?.id) return;
+  try {
+    await api.tabs.sendMessage(tab.id, { type: "cf_rescan", next });
+  } catch {}
+}

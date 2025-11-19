@@ -23,6 +23,11 @@ function normalize(s = {}) {
     pinSalt: typeof s.pinSalt === "string" ? s.pinSalt : null,
     pinAlgo: typeof s.pinAlgo === "string" ? s.pinAlgo : null,
     pinIter: Number.isFinite(s.pinIter) ? s.pinIter : null,
+    blockedImages: Array.isArray(s.blockedImages)
+      ? s.blockedImages
+          .filter((u) => typeof u === "string" && u.length <= 500)
+          .slice(0, 500)
+      : [],
   };
 }
 
@@ -37,6 +42,7 @@ let settings = {
   pinSalt: null,
   pinAlgo: null,
   pinIter: null,
+  blockedImages: [],
 };
 let nameRegex = null;
 let observer = null;
@@ -248,6 +254,39 @@ function isWhitelisted(url, list) {
     if (h === ph || h.endsWith("." + ph)) return true;
   }
   return false;
+}
+
+function canonicalImageUrl(u) {
+  if (!u) return null;
+  try {
+    return new URL(u, location.href).href;
+  } catch {
+    return String(u);
+  }
+}
+
+function matchesBlockedImage(url) {
+  if (!url || !Array.isArray(settings.blockedImages)) return false;
+  const canon = canonicalImageUrl(url);
+  if (!canon) return false;
+  return settings.blockedImages.some(
+    (entry) => canonicalImageUrl(entry) === canon
+  );
+}
+
+function blockExplicitImages() {
+  if (!settings.blockedImages?.length) return;
+  const imgs = document.querySelectorAll("img");
+  imgs.forEach((img) => {
+    const src =
+      img.currentSrc ||
+      img.src ||
+      img.getAttribute("data-src") ||
+      img.getAttribute("data-lazy-src");
+    if (src && matchesBlockedImage(src)) {
+      applyAction(img);
+    }
+  });
 }
 
 // Unicode-aware regex; allow short case endings (e.g., "Vučiću")
@@ -1074,8 +1113,13 @@ function applyAction(el) {
       lastScanBlockedCount++;
       break;
     case "replace":
-      replaceText(container);
-      lastScanBlockedCount++;
+      if (nameRegex) {
+        replaceText(container);
+        lastScanBlockedCount++;
+      } else if (!container.classList.contains("cf-hidden")) {
+        container.classList.add("cf-hidden");
+        lastScanBlockedCount++;
+      }
       break;
   }
 }
@@ -1141,13 +1185,16 @@ function scan() {
     clearEffects();
     return 0;
   }
-  if (!settings.names || !settings.names.length) {
+  const hasTerms = Array.isArray(settings.names) && settings.names.length > 0;
+  const hasBlockedImages =
+    Array.isArray(settings.blockedImages) && settings.blockedImages.length > 0;
+  if (!hasTerms && !hasBlockedImages) {
     clearEffects();
     return 0;
   }
 
-  nameRegex = buildRegex(settings.names);
-  if (!nameRegex) {
+  nameRegex = hasTerms ? buildRegex(settings.names) : null;
+  if (hasTerms && !nameRegex) {
     clearEffects();
     return 0;
   }
@@ -1155,6 +1202,13 @@ function scan() {
   ensureStyle();
 
   lastScanBlockedCount = 0;
+
+  if (hasBlockedImages) {
+    blockExplicitImages();
+    if (!hasTerms) {
+      return lastScanBlockedCount;
+    }
+  }
 
   // Pass 0 (fast path for modern browsers): pick card-like nodes that have media + text.
   // Do this *after* nameRegex exists.
@@ -1246,6 +1300,11 @@ function loadSettingsAndInit() {
         pinSalt: typeof saved.pinSalt === "string" ? saved.pinSalt : null,
         pinAlgo: typeof saved.pinAlgo === "string" ? saved.pinAlgo : null,
         pinIter: Number.isFinite(saved.pinIter) ? saved.pinIter : null,
+        blockedImages: Array.isArray(saved.blockedImages)
+          ? saved.blockedImages
+              .filter((u) => typeof u === "string" && u.length <= 500)
+              .slice(0, 500)
+          : [],
       };
       nameRegex = buildRegex(settings.names);
       scan();
@@ -1289,6 +1348,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     pinSalt: typeof newVal.pinSalt === "string" ? newVal.pinSalt : null,
     pinAlgo: typeof newVal.pinAlgo === "string" ? newVal.pinAlgo : null,
     pinIter: Number.isFinite(newVal.pinIter) ? newVal.pinIter : null,
+    blockedImages: Array.isArray(newVal.blockedImages)
+      ? newVal.blockedImages
+          .filter((u) => typeof u === "string" && u.length <= 500)
+          .slice(0, 500)
+      : [],
   };
 
   // Security: Limit total names count
