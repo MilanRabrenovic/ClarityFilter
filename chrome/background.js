@@ -21,17 +21,6 @@ async function activeTabId() {
   return tabs[0]?.id ?? null;
 }
 
-async function getMainFrameId(tabId) {
-  try {
-    const frames = await chrome.webNavigation.getAllFrames({ tabId });
-    // Find the main frame (frameId: 0)
-    const mainFrame = frames.find((frame) => frame.frameId === 0);
-    return mainFrame ? mainFrame.frameId : 0;
-  } catch (error) {
-    return 0; // Default to main frame
-  }
-}
-
 function sendMessageWithTimeout(tabId, msg, ms = 20000, frameId = null) {
   return new Promise((resolve) => {
     let done = false;
@@ -55,53 +44,16 @@ function sendMessageWithTimeout(tabId, msg, ms = 20000, frameId = null) {
 
 async function promptPin(reason) {
   const id = await activeTabId();
-  if (!id) {
-    return false;
-  }
+  if (!id) return false;
 
-  // Get the main frame ID to target only the main frame
-  const mainFrameId = await getMainFrameId(id);
-
-  try {
-    // First, try to ping the content script in the main frame
-    const pingResp = await sendMessageWithTimeout(
-      id,
-      { type: "cf_ping" },
-      1000,
-      mainFrameId
-    );
-
-    if (pingResp?.ok) {
-      // Content script is loaded in main frame, request PIN
-      const resp = await sendMessageWithTimeout(
-        id,
-        { type: "cf_require_pin", reason },
-        30000,
-        mainFrameId
-      );
-      return resp?.ok === true;
-    } else {
-      // Content script not loaded, inject it
-      await chrome.scripting.executeScript({
-        target: { tabId: id, frameIds: [mainFrameId] },
-        files: ["content.js"],
-      });
-
-      // Wait for content script to initialize
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      // Now try PIN prompt in main frame
-      const resp = await sendMessageWithTimeout(
-        id,
-        { type: "cf_require_pin", reason },
-        30000,
-        mainFrameId
-      );
-      return resp?.ok === true;
-    }
-  } catch (error) {
-    return false;
-  }
+  // Try main frame (0). If content script isn't there (e.g., chrome://), deny.
+  const resp = await sendMessageWithTimeout(
+    id,
+    { type: "cf_require_pin", reason },
+    30000,
+    0 // top frame
+  );
+  return resp?.ok === true;
 }
 
 async function ensurePinAuthorized(reason, s) {

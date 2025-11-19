@@ -606,7 +606,6 @@ pinEnabledEl?.addEventListener("change", async () => {
 
 setPinBtn?.addEventListener("click", setOrChangePinFlow);
 
-// NEW: Export/Import event listeners
 exportBtn?.addEventListener("click", exportSettings);
 importBtn?.addEventListener("click", importSettings);
 
