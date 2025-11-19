@@ -234,3 +234,36 @@ input[type="range"] {
 .small {
   font-size: 12px;
 }
+
+.blocked-list {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.blocked-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 13px;
+  word-break: break-all;
+}
+.blocked-list li:last-child {
+  border-bottom: none;
+}
+.blocked-list button {
+  border: none;
+  background: transparent;
+  color: #ef4444;
+  cursor: pointer;
+  font-weight: 600;
+}
+.blocked-list button:hover {
+  text-decoration: underline;
+}
