@@ -1,5 +1,6 @@
 // ClarityFilter - content script (Manifest V2)
 // ------------------------------------------------
+const api = typeof browser !== "undefined" ? browser : chrome;
 
 let lastScanBlockedCount = 0;
 const STORAGE_KEY = "cf_settings";
@@ -363,7 +364,7 @@ async function pbkdf2Hex(pin, saltHex, iter = 150000) {
 }
 
 async function getSettings() {
-  const all = await chrome.storage.sync.get(STORAGE_KEY);
+  const all = await api.storage.sync.get(STORAGE_KEY);
   const s = all[STORAGE_KEY] || {};
   return {
     ...s,
@@ -419,7 +420,7 @@ document.addEventListener("keydown", async (e) => {
 
     try {
       // Get current settings from storage
-      const all = await chrome.storage.sync.get(STORAGE_KEY);
+      const all = await api.storage.sync.get(STORAGE_KEY);
       const current = all[STORAGE_KEY] || {};
 
       // Verify PIN if enabled
@@ -434,7 +435,7 @@ document.addEventListener("keydown", async (e) => {
 
       // Toggle the enabled state
       const newEnabled = !current.enabled;
-      await chrome.storage.sync.set({
+      await api.storage.sync.set({
         [STORAGE_KEY]: { ...current, enabled: newEnabled },
       });
 
@@ -450,7 +451,7 @@ document.addEventListener("keydown", async (e) => {
 });
 
 // Let popup/options ask us to verify a PIN when needed.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "cf_require_pin") {
     (async () => {
       const ok = await requirePin(msg.reason || "change settings");
@@ -1123,7 +1124,7 @@ function startObserver() {
 }
 
 // Message from popup: rescan & report count
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "cf_rescan") {
     const count = scan();
     sendResponse({
@@ -1153,7 +1154,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         lastToggleTime = now;
 
         // Get current settings from storage
-        const all = await chrome.storage.sync.get(STORAGE_KEY);
+        const all = await api.storage.sync.get(STORAGE_KEY);
         const current = all[STORAGE_KEY] || {};
 
         // Verify PIN if enabled
@@ -1169,7 +1170,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
         // Toggle the enabled state
         const newEnabled = !current.enabled;
-        await chrome.storage.sync.set({
+        await api.storage.sync.set({
           [STORAGE_KEY]: { ...current, enabled: newEnabled },
         });
 
@@ -1192,14 +1193,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Settings init & changes
 function loadSettingsAndInit() {
   // one-time legacy migration for overall object
-  chrome.storage.sync.get(null, (all) => {
+  api.storage.sync.get(null, (all) => {
     if (!all[STORAGE_KEY] && all["pcf_settings"]) {
-      chrome.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
+      api.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
     }
   });
 
-  chrome.storage.sync.get([STORAGE_KEY], (syncRes) => {
-    chrome.storage.local.get([STORAGE_KEY], (localRes) => {
+  api.storage.sync.get([STORAGE_KEY], (syncRes) => {
+    api.storage.local.get([STORAGE_KEY], (localRes) => {
       const saved = syncRes[STORAGE_KEY] || localRes[STORAGE_KEY] || {};
       settings = {
         names: Array.isArray(saved.names) ? saved.names : [],
@@ -1220,13 +1221,13 @@ function loadSettingsAndInit() {
   });
 }
 
-chrome.storage.sync.get(null, (all) => {
+api.storage.sync.get(null, (all) => {
   if (!all[STORAGE_KEY] && all["pcf_settings"]) {
-    chrome.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
+    api.storage.sync.set({ [STORAGE_KEY]: all["pcf_settings"] });
   }
 });
 
-chrome.storage.onChanged.addListener((changes, area) => {
+api.storage.onChanged.addListener((changes, area) => {
   if ((area !== "sync" && area !== "local") || !changes[STORAGE_KEY]) return;
   const newVal = changes[STORAGE_KEY].newValue || {};
 

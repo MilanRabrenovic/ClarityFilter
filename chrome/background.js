@@ -1,4 +1,5 @@
 // background.js (Chrome MV3) - Minimal Working Implementation
+const api = typeof browser !== "undefined" ? browser : chrome;
 const STORAGE_KEY = "cf_settings";
 
 function normalize(s = {}) {
@@ -17,7 +18,7 @@ function normalize(s = {}) {
 }
 
 async function activeTabId() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabs = await api.tabs.query({ active: true, currentWindow: true });
   return tabs[0]?.id ?? null;
 }
 
@@ -28,10 +29,10 @@ function sendMessageWithTimeout(tabId, msg, ms = 20000, frameId = null) {
       if (!done) resolve(null);
     }, ms);
     try {
-      chrome.tabs.sendMessage(tabId, msg, { frameId }, (resp) => {
+      api.tabs.sendMessage(tabId, msg, { frameId }, (resp) => {
         done = true;
         clearTimeout(t);
-        if (chrome.runtime.lastError) return resolve(null);
+        if (api.runtime.lastError) return resolve(null);
         resolve(resp ?? null);
       });
     } catch {
@@ -65,7 +66,7 @@ async function ensurePinAuthorized(reason, s) {
 let isProcessingCommand = false;
 
 // Command handler
-chrome.commands.onCommand.addListener(async (command) => {
+api.commands.onCommand.addListener(async (command) => {
   if (command !== "toggle-filter") {
     return;
   }
@@ -78,7 +79,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 
   try {
     // Read current settings
-    const all0 = await chrome.storage.sync.get(STORAGE_KEY);
+    const all0 = await api.storage.sync.get(STORAGE_KEY);
     const current0 = normalize(all0[STORAGE_KEY] || {});
 
     // Check PIN authorization
@@ -91,18 +92,18 @@ chrome.commands.onCommand.addListener(async (command) => {
     }
 
     // Re-read settings after PIN check
-    const all1 = await chrome.storage.sync.get(STORAGE_KEY);
+    const all1 = await api.storage.sync.get(STORAGE_KEY);
     const current1 = normalize(all1[STORAGE_KEY] || {});
 
     // Toggle the setting
     const next = { ...current1, enabled: !current1.enabled };
-    await chrome.storage.sync.set({ [STORAGE_KEY]: next });
+    await api.storage.sync.set({ [STORAGE_KEY]: next });
 
     // Notify content script
     const id = await activeTabId();
     if (id) {
       try {
-        await chrome.tabs.sendMessage(id, { type: "cf_rescan" });
+        await api.tabs.sendMessage(id, { type: "cf_rescan" });
       } catch (error) {
         // Ignore if no content script on that page yet
       }
@@ -115,10 +116,10 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 // Initialize default settings
-chrome.runtime.onInstalled.addListener(async () => {
-  const all = await chrome.storage.sync.get(STORAGE_KEY);
+api.runtime.onInstalled.addListener(async () => {
+    const all = await api.storage.sync.get(STORAGE_KEY);
   if (!all[STORAGE_KEY]) {
-    await chrome.storage.sync.set({
+    await api.storage.sync.set({
       [STORAGE_KEY]: {
         names: [],
         mode: "hide",

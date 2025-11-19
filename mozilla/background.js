@@ -3,6 +3,42 @@ const STORAGE_KEY = "cf_settings";
 
 // Use browser.* if available (Firefox), else chrome.*
 const api = typeof browser !== "undefined" ? browser : chrome;
+const actionApi = api.action || api.browserAction || null;
+
+async function getPlatformInfo() {
+  if (!api.runtime?.getPlatformInfo) return null;
+  try {
+    return await api.runtime.getPlatformInfo();
+  } catch {
+    return null;
+  }
+}
+
+async function openPopupOrTabFallback() {
+  try {
+    if (api.action?.openPopup) {
+      await api.action.openPopup();
+      return;
+    }
+    if (api.browserAction?.openPopup) {
+      await api.browserAction.openPopup();
+      return;
+    }
+  } catch {
+    // fall through to tab
+  }
+  const url = api.runtime.getURL("popup.html");
+  try {
+    const existing = await api.tabs.query({ url });
+    if (existing.length) {
+      await api.tabs.update(existing[0].id, { active: true });
+      return;
+    }
+  } catch {
+    // ignore and create below
+  }
+  await api.tabs.create({ url });
+}
 
 function normalize(s = {}) {
   return {
@@ -86,9 +122,7 @@ async function promptPin(reason) {
   }
 
   // Final fallback: open popup (for chrome:// pages or other edge cases)
-  try {
-    await api.action.openPopup();
-  } catch {}
+  await openPopupOrTabFallback();
 
   const resp2 = await new Promise((resolve) => {
     let done = false;
@@ -169,3 +203,13 @@ api.runtime.onInstalled.addListener(async () => {
     });
   }
 });
+
+if (actionApi?.onClicked) {
+  actionApi.onClicked.addListener(async () => {
+    const platform = await getPlatformInfo();
+    const os = platform?.os || "";
+    if (os === "android" || os === "ios") {
+      await openPopupOrTabFallback();
+    }
+  });
+}

@@ -1,5 +1,6 @@
 // ClarityFilter - popup (virtualized lists for terms + whitelist) — RAY-CAST DELETE
 
+const api = typeof browser !== "undefined" ? browser : chrome;
 const STORAGE_KEY = "cf_settings";
 const LEGACY_KEYS = ["pcf_settings"];
 
@@ -45,16 +46,15 @@ const vlist = { data: [], scrollTop: 0, viewportH: 0 }; // for terms
 const wlist = { data: [], scrollTop: 0, viewportH: 0 }; // for whitelist
 
 // ---------- storage helpers ----------
-const getSync = (keys) =>
-  new Promise((res) => chrome.storage.sync.get(keys, res));
+const getSync = (keys) => new Promise((res) => api.storage.sync.get(keys, res));
 const getLocal = (keys) =>
-  new Promise((res) => chrome.storage.local.get(keys, res));
+  new Promise((res) => api.storage.local.get(keys, res));
 const setSync = (obj) =>
-  new Promise((res) => chrome.storage.sync.set(obj, res));
+  new Promise((res) => api.storage.sync.set(obj, res));
 const setLocal = (obj) =>
-  new Promise((res) => chrome.storage.local.set(obj, res));
+  new Promise((res) => api.storage.local.set(obj, res));
 const removeSync = (keys) =>
-  new Promise((res) => chrome.storage.sync.remove(keys, res));
+  new Promise((res) => api.storage.sync.remove(keys, res));
 
 async function migrateIfNeeded() {
   const syncAll = await getSync(null);
@@ -134,11 +134,11 @@ async function verifyPinInput() {
 async function requirePinFromActiveTab(reason = "change settings") {
   // Ask the active tab’s content script to prompt for PIN.
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs && tabs[0];
       if (!tab?.id) return resolve(false);
       try {
-        chrome.tabs.sendMessage(
+        api.tabs.sendMessage(
           tab.id,
           { type: "cf_require_pin", reason },
           (resp) => resolve(!!resp?.ok)
@@ -201,11 +201,11 @@ function setStatus(msg, ms = 900) {
 }
 
 function rescanActiveTabAndShowCount() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs && tabs[0];
     if (!tab?.id) return;
-    chrome.tabs.sendMessage(tab.id, { type: "cf_rescan" }, (resp) => {
-      if (chrome.runtime.lastError) {
+    api.tabs.sendMessage(tab.id, { type: "cf_rescan" }, (resp) => {
+      if (api.runtime.lastError) {
         setStatus("Refresh the page", 1500);
         return;
       }
@@ -587,7 +587,7 @@ document.addEventListener("keydown", async (e) => {
 
 const openOptionsPageBtn = document.getElementById("openOptionsPage");
 openOptionsPageBtn?.addEventListener("click", () => {
-  chrome.runtime.openOptionsPage();
+  api.runtime.openOptionsPage();
 });
 
 cfEnabled.addEventListener("change", async () => {

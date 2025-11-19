@@ -1,18 +1,19 @@
+const api = typeof browser !== "undefined" ? browser : chrome;
 const STORAGE_KEY = "cf_settings";
 
 // ---- storage helpers (MV2/MV3-safe) ----
 const getSync = (keys) =>
   new Promise((resolve, reject) => {
-    chrome.storage.sync.get(keys, (res) => {
-      if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+    api.storage.sync.get(keys, (res) => {
+      if (api.runtime.lastError) reject(api.runtime.lastError);
       else resolve(res);
     });
   });
 
 const setSync = (obj) =>
   new Promise((resolve, reject) => {
-    chrome.storage.sync.set(obj, () => {
-      if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+    api.storage.sync.set(obj, () => {
+      if (api.runtime.lastError) reject(api.runtime.lastError);
       else resolve();
     });
   });
@@ -192,11 +193,11 @@ async function saveGeneralOnly() {
     status("Saved", "success");
 
     // ping active tab so content script can rescan
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs && tabs[0];
       if (!tab?.id) return;
       try {
-        chrome.tabs.sendMessage(tab.id, { type: "cf_rescan" }, () => void 0);
+        api.tabs.sendMessage(tab.id, { type: "cf_rescan" }, () => void 0);
       } catch {}
     });
   } catch (err) {
@@ -335,8 +336,8 @@ function validateImportData(data) {
     if (typeof name !== "string") return false;
     if (name.length > 100) return false; // Reasonable limit
     if (name.length < 1) return false;
-    // Allow letters, numbers, spaces (including multiple consecutive), and common punctuation
-    if (!/^[a-zA-Z0-9\s\-_.,!?()]+$/.test(name)) return false;
+    // Allow Unicode letters/numbers, spaces, and common punctuation
+    if (!/^[\p{L}\p{N}\s\-_.,!?()]+$/u.test(name)) return false;
   }
 
   // Validate whitelist if present
@@ -540,11 +541,11 @@ async function importSettings() {
         await load();
 
         // Notify content script to rescan
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        api.tabs.query({ active: true, currentWindow: true }, (tabs) => {
           const tab = tabs && tabs[0];
           if (!tab?.id) return;
           try {
-            chrome.tabs.sendMessage(
+            api.tabs.sendMessage(
               tab.id,
               { type: "cf_rescan" },
               () => void 0
@@ -582,7 +583,7 @@ saveBtn?.addEventListener("click", saveGeneralOnly);
 
 openPopupBtn?.addEventListener("click", async () => {
   try {
-    if (chrome.action?.openPopup) await chrome.action.openPopup();
+    if (api.action?.openPopup) await api.action.openPopup();
     else alert("Click the ClarityFilter toolbar icon to open the popup.");
   } catch {
     alert("Click the ClarityFilter toolbar icon to open the popup.");
@@ -607,7 +608,7 @@ exportBtn?.addEventListener("click", exportSettings);
 importBtn?.addEventListener("click", importSettings);
 
 // reflect external changes
-chrome.storage.onChanged.addListener((changes, area) => {
+api.storage.onChanged.addListener((changes, area) => {
   if ((area === "sync" || area === "local") && changes[STORAGE_KEY]) {
     load();
   }
