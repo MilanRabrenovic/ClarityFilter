@@ -1,5 +1,6 @@
 // background.js (Firefox MV2)
 const STORAGE_KEY = "cf_settings";
+const MENU_BLOCK_SELECTION = "cf_block_selection";
 
 // Use browser.* if available (Firefox), else chrome.*
 const api = typeof browser !== "undefined" ? browser : chrome;
@@ -202,8 +203,53 @@ api.runtime.onInstalled.addListener(async () => {
       },
     });
   }
+
+  setupContextMenus();
 });
 
+function setupContextMenus() {
+  if (!api.contextMenus?.create) return;
+  try {
+    api.contextMenus.removeAll(() => {
+      api.contextMenus.create({
+        id: MENU_BLOCK_SELECTION,
+        title: api.i18n?.getMessage?.("cfBlockSelection") || "Block this term",
+        contexts: ["selection"],
+      });
+    });
+  } catch {
+    // ignore
+  }
+}
+
+api.runtime.onStartup?.addListener?.(setupContextMenus);
+
+api.contextMenus?.onClicked?.addListener(async (info, tab) => {
+  if (info.menuItemId !== MENU_BLOCK_SELECTION) return;
+
+  const raw = (info.selectionText || "").trim();
+  if (!raw || raw.length > 100) return;
+
+  try {
+    const all = await api.storage.sync.get(STORAGE_KEY);
+    const current = normalize(all[STORAGE_KEY]);
+
+    if (current.names.includes(raw)) return;
+
+    const next = { ...current, names: [...current.names, raw] };
+    await api.storage.sync.set({ [STORAGE_KEY]: next });
+
+    if (tab?.id) {
+      try {
+        await api.tabs.sendMessage(tab.id, { type: "cf_rescan", next });
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore errors silently
+  }
+});
 if (actionApi?.onClicked) {
   actionApi.onClicked.addListener(async () => {
     const platform = await getPlatformInfo();
